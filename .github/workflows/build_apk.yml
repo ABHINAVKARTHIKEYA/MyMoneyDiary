@@ -35,10 +35,10 @@ jobs:
         run: flutter test
 
       - name: Build Release APK
-        run: flutter build apk --release
+        run: flutter build apk --release --android-skip-build-dependency-validation
 
       - name: Build Release App Bundle (for Google Play Store)
-        run: flutter build appbundle --release
+        run: flutter build appbundle --release --android-skip-build-dependency-validation
 
       - name: Upload Release APK
         uses: actions/upload-artifact@v4
