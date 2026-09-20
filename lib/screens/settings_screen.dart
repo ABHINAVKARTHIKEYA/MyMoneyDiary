@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../models/app_settings.dart';
 import '../providers/finance_provider.dart';
 import '../theme/app_theme.dart';
 
@@ -242,7 +243,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void _showSetPinDialog(
     BuildContext context,
     FinanceProvider finance,
-    settings,
+    AppSettings settings,
   ) {
     final pinController = TextEditingController();
 

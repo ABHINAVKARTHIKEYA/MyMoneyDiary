@@ -46,7 +46,7 @@ class AppTheme {
         letterSpacing: 0.5,
       ),
     ),
-    cardTheme: CardTheme(
+    cardTheme: CardThemeData(
       color: lightSurface,
       elevation: 2,
       shadowColor: Colors.black.withAlpha(20),
@@ -102,7 +102,7 @@ class AppTheme {
         letterSpacing: 0.5,
       ),
     ),
-    cardTheme: CardTheme(
+    cardTheme: CardThemeData(
       color: darkCard,
       elevation: 2,
       shape: RoundedRectangleBorder(
