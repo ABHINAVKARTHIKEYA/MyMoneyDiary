@@ -1,0 +1,57 @@
+name: Build Release APK & App Bundle
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Android Release Artifacts
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Get Flutter dependencies
+        run: flutter pub get
+
+      - name: Run verification unit tests
+        run: flutter test
+
+      - name: Build Release APK
+        run: flutter build apk --release
+
+      - name: Build Release App Bundle (for Google Play Store)
+        run: flutter build appbundle --release
+
+      - name: Upload Release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: MyMoneyDiary-Release-APK
+          path: build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload Release App Bundle (Play Store AAB)
+        uses: actions/upload-artifact@v4
+        with:
+          name: MyMoneyDiary-PlayStore-AAB
+          path: build/app/outputs/bundle/release/app-release.aab
+          if-no-files-found: error
+          retention-days: 30
