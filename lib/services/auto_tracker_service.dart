@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/services.dart';
 import '../models/transaction_model.dart';
+import '../models/account.dart';
 import '../data/database_helper.dart';
 import 'sms_parser_service.dart';
 
@@ -177,7 +178,7 @@ class AutoTrackerService {
     if (accountId == null) {
       final accounts = await DatabaseHelper.instance.getAccounts();
       final pool = accounts.firstWhere(
-        (a) => a.type.key == 'pool',
+        (a) => a.type == AccountType.pool,
         orElse: () => accounts.isNotEmpty ? accounts.first : throw Exception('No account found'),
       );
       targetId = pool.id!;
