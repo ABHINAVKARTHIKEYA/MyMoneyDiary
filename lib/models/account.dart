@@ -1,11 +1,26 @@
+import 'package:flutter/material.dart';
+
 enum AccountType {
   pool,
+  salary,
+  bank,
+  creditCard,
   debt,
   lending,
   chit,
+  insurance,
+  demat,
   temporaryAdjustment,
   maintenance,
   miscellaneous,
+  other1,
+  other2,
+  other3,
+  other4,
+  other5,
+  other6,
+  other7,
+  other8,
   custom,
 }
 
@@ -14,18 +29,44 @@ extension AccountTypeExtension on AccountType {
     switch (this) {
       case AccountType.pool:
         return 'pool';
+      case AccountType.salary:
+        return 'salary';
+      case AccountType.bank:
+        return 'bank';
+      case AccountType.creditCard:
+        return 'credit_card';
       case AccountType.debt:
         return 'debt';
       case AccountType.lending:
         return 'lending';
       case AccountType.chit:
         return 'chit';
+      case AccountType.insurance:
+        return 'insurance';
+      case AccountType.demat:
+        return 'demat';
       case AccountType.temporaryAdjustment:
         return 'temporary_adjustment';
       case AccountType.maintenance:
         return 'maintenance';
       case AccountType.miscellaneous:
         return 'miscellaneous';
+      case AccountType.other1:
+        return 'other_1';
+      case AccountType.other2:
+        return 'other_2';
+      case AccountType.other3:
+        return 'other_3';
+      case AccountType.other4:
+        return 'other_4';
+      case AccountType.other5:
+        return 'other_5';
+      case AccountType.other6:
+        return 'other_6';
+      case AccountType.other7:
+        return 'other_7';
+      case AccountType.other8:
+        return 'other_8';
       case AccountType.custom:
         return 'custom';
     }
@@ -34,21 +75,181 @@ extension AccountTypeExtension on AccountType {
   String get displayName {
     switch (this) {
       case AccountType.pool:
-        return 'Pool Account';
+        return 'Pool Account (Cash in Hand)';
+      case AccountType.salary:
+        return 'Salary Account';
+      case AccountType.bank:
+        return 'Bank Accounts';
+      case AccountType.creditCard:
+        return 'Credit Cards';
       case AccountType.debt:
         return 'Debt (I Owe)';
       case AccountType.lending:
         return 'Lending (Owed to Me)';
       case AccountType.chit:
-        return 'Chit Fund (CHITS)';
+        return 'Chit Funds (CHITS)';
+      case AccountType.insurance:
+        return 'Insurance';
+      case AccountType.demat:
+        return 'Demats / Stocks';
       case AccountType.temporaryAdjustment:
         return 'Temporary Adjustment';
       case AccountType.maintenance:
         return 'Maintenance';
       case AccountType.miscellaneous:
         return 'Miscellaneous';
+      case AccountType.other1:
+        return 'Others 1';
+      case AccountType.other2:
+        return 'Others 2';
+      case AccountType.other3:
+        return 'Others 3';
+      case AccountType.other4:
+        return 'Others 4';
+      case AccountType.other5:
+        return 'Others 5';
+      case AccountType.other6:
+        return 'Others 6';
+      case AccountType.other7:
+        return 'Others 7';
+      case AccountType.other8:
+        return 'Others 8';
       case AccountType.custom:
         return 'Custom Account';
+    }
+  }
+
+  String get defaultIcon {
+    switch (this) {
+      case AccountType.pool:
+        return 'account_balance_wallet';
+      case AccountType.salary:
+        return 'work';
+      case AccountType.bank:
+        return 'account_balance';
+      case AccountType.creditCard:
+        return 'credit_card';
+      case AccountType.debt:
+        return 'arrow_downward';
+      case AccountType.lending:
+        return 'arrow_upward';
+      case AccountType.chit:
+        return 'groups';
+      case AccountType.insurance:
+        return 'health_and_safety';
+      case AccountType.demat:
+        return 'trending_up';
+      case AccountType.temporaryAdjustment:
+        return 'swap_horiz';
+      case AccountType.maintenance:
+        return 'build_circle';
+      case AccountType.miscellaneous:
+        return 'category';
+      case AccountType.other1:
+        return 'folder_special';
+      case AccountType.other2:
+        return 'stars';
+      case AccountType.other3:
+        return 'pie_chart';
+      case AccountType.other4:
+        return 'inventory_2';
+      case AccountType.other5:
+        return 'savings';
+      case AccountType.other6:
+        return 'receipt_long';
+      case AccountType.other7:
+        return 'account_box';
+      case AccountType.other8:
+        return 'more_horiz';
+      case AccountType.custom:
+        return 'account_box';
+    }
+  }
+
+  IconData get iconData {
+    switch (this) {
+      case AccountType.pool:
+        return Icons.account_balance_wallet;
+      case AccountType.salary:
+        return Icons.work;
+      case AccountType.bank:
+        return Icons.account_balance;
+      case AccountType.creditCard:
+        return Icons.credit_card;
+      case AccountType.debt:
+        return Icons.arrow_downward;
+      case AccountType.lending:
+        return Icons.arrow_upward;
+      case AccountType.chit:
+        return Icons.groups;
+      case AccountType.insurance:
+        return Icons.health_and_safety;
+      case AccountType.demat:
+        return Icons.trending_up;
+      case AccountType.temporaryAdjustment:
+        return Icons.swap_horiz;
+      case AccountType.maintenance:
+        return Icons.build_circle;
+      case AccountType.miscellaneous:
+        return Icons.category;
+      case AccountType.other1:
+        return Icons.folder_special;
+      case AccountType.other2:
+        return Icons.stars;
+      case AccountType.other3:
+        return Icons.pie_chart;
+      case AccountType.other4:
+        return Icons.inventory_2;
+      case AccountType.other5:
+        return Icons.savings;
+      case AccountType.other6:
+        return Icons.receipt_long;
+      case AccountType.other7:
+        return Icons.account_box;
+      case AccountType.other8:
+        return Icons.more_horiz;
+      case AccountType.custom:
+        return Icons.folder;
+    }
+  }
+
+  int get defaultColor {
+    switch (this) {
+      case AccountType.pool:
+        return 0xFF0F3E33; // Emerald
+      case AccountType.salary:
+        return 0xFF1E88E5; // Blue
+      case AccountType.bank:
+        return 0xFF0288D1; // Cyan
+      case AccountType.creditCard:
+        return 0xFF7B1FA2; // Purple
+      case AccountType.debt:
+        return 0xFFC62828; // Red
+      case AccountType.lending:
+        return 0xFF2E7D32; // Green
+      case AccountType.chit:
+        return 0xFFB37400; // Gold
+      case AccountType.insurance:
+        return 0xFF00897B; // Teal
+      case AccountType.demat:
+        return 0xFFE65100; // Orange
+      case AccountType.temporaryAdjustment:
+        return 0xFFD84315; // Deep Orange
+      case AccountType.maintenance:
+        return 0xFF558B2F; // Olive Green
+      case AccountType.miscellaneous:
+        return 0xFF546E7A; // Slate
+      case AccountType.other1:
+      case AccountType.other2:
+      case AccountType.other3:
+      case AccountType.other4:
+      case AccountType.other5:
+      case AccountType.other6:
+      case AccountType.other7:
+      case AccountType.other8:
+        return 0xFF455A64; // Blue Grey
+      case AccountType.custom:
+        return 0xFF37474F;
     }
   }
 
@@ -56,18 +257,44 @@ extension AccountTypeExtension on AccountType {
     switch (key) {
       case 'pool':
         return AccountType.pool;
+      case 'salary':
+        return AccountType.salary;
+      case 'bank':
+        return AccountType.bank;
+      case 'credit_card':
+        return AccountType.creditCard;
       case 'debt':
         return AccountType.debt;
       case 'lending':
         return AccountType.lending;
       case 'chit':
         return AccountType.chit;
+      case 'insurance':
+        return AccountType.insurance;
+      case 'demat':
+        return AccountType.demat;
       case 'temporary_adjustment':
         return AccountType.temporaryAdjustment;
       case 'maintenance':
         return AccountType.maintenance;
       case 'miscellaneous':
         return AccountType.miscellaneous;
+      case 'other_1':
+        return AccountType.other1;
+      case 'other_2':
+        return AccountType.other2;
+      case 'other_3':
+        return AccountType.other3;
+      case 'other_4':
+        return AccountType.other4;
+      case 'other_5':
+        return AccountType.other5;
+      case 'other_6':
+        return AccountType.other6;
+      case 'other_7':
+        return AccountType.other7;
+      case 'other_8':
+        return AccountType.other8;
       default:
         return AccountType.custom;
     }

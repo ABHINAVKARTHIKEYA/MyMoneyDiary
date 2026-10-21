@@ -309,6 +309,64 @@ void main() {
     assert(tx1.referenceId.startsWith('SIG_200.00_debit_20261021_1145_HDFCBK'));
   });
 
+  // 5. Chit Pre/Post Lifting & Dynamic Installment Tests
+  print('\n--- 5. Chit Pre/Post Lifting & Dynamic Installments ---');
+  test('Chit dynamically toggles between Pre-Lifting and Post-Lifting installment', () {
+    final chit = ChitDetails(
+      accountId: 1,
+      totalValue: 200000.0,
+      durationMonths: 20,
+      installmentBeforeLifting: 8500.0,
+      installmentAfterLifting: 10000.0,
+      isLifted: false,
+    );
+
+    // Before lifting: activeInstallment is installmentBeforeLifting
+    assert(chit.activeInstallment == 8500.0, 'Expected 8500 before lifting, got ${chit.activeInstallment}');
+
+    // Mark as lifted: activeInstallment dynamically becomes installmentAfterLifting
+    final liftedChit = chit.copyWith(
+      isLifted: true,
+      liftedMonth: 5,
+      prizeMoneyReceived: 160000.0,
+    );
+    assert(liftedChit.activeInstallment == 10000.0, 'Expected 10000 after lifting, got ${liftedChit.activeInstallment}');
+    assert(liftedChit.isLifted == true);
+    assert(liftedChit.liftedMonth == 5);
+  });
+
+  // 6. Transaction Model Enhancements (Payment Mode, Debit/Credit Accounts, Receipt)
+  print('\n--- 6. Transaction Model Enhancements ---');
+  test('Transaction model serializes and preserves payment modes, receipts, and dual accounts', () {
+    final tx = TransactionModel(
+      accountId: 2,
+      type: TransactionType.debit,
+      amount: 4500.0,
+      category: 'Electronics',
+      note: 'Bought mechanical keyboard',
+      date: DateTime(2026, 10, 21, 15, 30),
+      paymentMode: 'Others',
+      otherPaymentModeDetails: 'Cryptocurrency / Gift Card',
+      receiptPath: '/storage/emulated/0/Download/receipt_123.pdf',
+      debitAccountName: 'HDFC Bank',
+      creditAccountName: 'Amazon Merchant',
+    );
+
+    final map = tx.toMap();
+    assert(map['payment_mode'] == 'Others');
+    assert(map['other_payment_mode_details'] == 'Cryptocurrency / Gift Card');
+    assert(map['receipt_path'] == '/storage/emulated/0/Download/receipt_123.pdf');
+    assert(map['debit_account_name'] == 'HDFC Bank');
+    assert(map['credit_account_name'] == 'Amazon Merchant');
+
+    final reconstructed = TransactionModel.fromMap(map);
+    assert(reconstructed.paymentMode == 'Others');
+    assert(reconstructed.otherPaymentModeDetails == 'Cryptocurrency / Gift Card');
+    assert(reconstructed.receiptPath == '/storage/emulated/0/Download/receipt_123.pdf');
+    assert(reconstructed.debitAccountName == 'HDFC Bank');
+    assert(reconstructed.creditAccountName == 'Amazon Merchant');
+  });
+
   print('\n=============================================');
   print('   RESULTS: $passed PASSED, $failed FAILED   ');
   print('=============================================');

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import '../models/account.dart';
 import '../models/chit_details.dart';
@@ -16,7 +17,9 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
   final _formKey = GlobalKey<FormState>();
 
   final TextEditingController _nameController = TextEditingController();
-  AccountType _selectedType = AccountType.custom;
+  final TextEditingController _initialBalanceController =
+      TextEditingController(text: '0.00');
+  AccountType _selectedType = AccountType.bank;
 
   // Debt / Lending fields
   final TextEditingController _principalController = TextEditingController();
@@ -31,31 +34,67 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
       TextEditingController();
   final TextEditingController _chitDurationController =
       TextEditingController(text: '20');
-  final TextEditingController _chitInstallmentController =
+  final TextEditingController _chitInstallmentBeforeController =
       TextEditingController();
+  final TextEditingController _chitInstallmentAfterController =
+      TextEditingController();
+  DateTime _chitStartDate = DateTime.now();
+  late DateTime _chitEndDate;
 
-  int _selectedColor = 0xFF0F3E33;
+  int _selectedColor = 0xFF0288D1;
 
   final List<int> _availableColors = [
     0xFF0F3E33, // Emerald Primary
-    0xFFE6B042, // Amber Gold
+    0xFF1E88E5, // Blue (Salary)
+    0xFF0288D1, // Cyan (Bank)
+    0xFF7B1FA2, // Purple (Credit Card)
+    0xFF00897B, // Teal (Insurance)
+    0xFFE65100, // Orange (Demat)
+    0xFFE6B042, // Amber Gold (Chit)
     0xFF2D8A70, // Jade Accent
-    0xFF1E88E5, // Blue
-    0xFF7B1FA2, // Purple
-    0xFFE53935, // Red
-    0xFFFB8C00, // Orange
-    0xFF546E7A, // Blue Grey
+    0xFFC62828, // Red (Debt)
+    0xFF2E7D32, // Green (Lending)
+    0xFF455A64, // Blue Grey (Others)
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    _chitEndDate = DateTime.now().add(const Duration(days: 20 * 30));
+  }
 
   @override
   void dispose() {
     _nameController.dispose();
+    _initialBalanceController.dispose();
     _principalController.dispose();
     _interestRateController.dispose();
     _chitTotalValueController.dispose();
     _chitDurationController.dispose();
-    _chitInstallmentController.dispose();
+    _chitInstallmentBeforeController.dispose();
+    _chitInstallmentAfterController.dispose();
     super.dispose();
+  }
+
+  void _onTypeChanged(AccountType? newType) {
+    if (newType == null) return;
+    setState(() {
+      _selectedType = newType;
+      _selectedColor = newType.defaultColor;
+      if (_nameController.text.isEmpty ||
+          AccountType.values.any((t) => t.displayName == _nameController.text)) {
+        if (newType.key.startsWith('other_')) {
+          _nameController.text = newType.displayName;
+        }
+      }
+    });
+  }
+
+  void _updateChitDates() {
+    final months = int.tryParse(_chitDurationController.text) ?? 20;
+    setState(() {
+      _chitEndDate = _chitStartDate.add(Duration(days: months * 30));
+    });
   }
 
   @override
@@ -64,6 +103,7 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
         _selectedType == AccountType.lending;
     final isChit = _selectedType == AccountType.chit;
     final currency = context.watch<FinanceProvider>().settings.currencySymbol;
+    final dateFormat = DateFormat('dd MMM yyyy');
 
     return Scaffold(
       appBar: AppBar(
@@ -76,16 +116,50 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // 1. Account Name
+              // 1. Account Type Selection
               const Text(
-                'Account Name',
+                'Select Account Type',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 6),
+              DropdownButtonFormField<AccountType>(
+                value: _selectedType,
+                isExpanded: true,
+                decoration: const InputDecoration(border: OutlineInputBorder()),
+                items: AccountType.values.map((type) {
+                  return DropdownMenuItem(
+                    value: type,
+                    child: Row(
+                      children: [
+                        Icon(type.iconData, color: Color(type.defaultColor), size: 20),
+                        const SizedBox(width: 10),
+                        Flexible(
+                          child: Text(
+                            type.displayName,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                }).toList(),
+                onChanged: _onTypeChanged,
+              ),
+
+              const SizedBox(height: 16),
+
+              // 2. Account Name
+              const Text(
+                'Account Name (Editable anytime)',
                 style: TextStyle(fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 6),
               TextFormField(
                 controller: _nameController,
-                decoration: const InputDecoration(
-                  hintText: 'e.g., Suresh Loan, Family Chit, Car Upkeep',
+                decoration: InputDecoration(
+                  hintText: 'e.g., HDFC Salary, SBI Savings, ICICI Amazon Pay, Car Chit',
+                  border: const OutlineInputBorder(),
+                  prefixIcon: Icon(_selectedType.iconData, color: Color(_selectedColor)),
                 ),
                 validator: (val) {
                   if (val == null || val.trim().isEmpty) {
@@ -97,31 +171,27 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
 
               const SizedBox(height: 16),
 
-              // 2. Account Type
-              const Text(
-                'Account Type',
-                style: TextStyle(fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 6),
-              DropdownButtonFormField<AccountType>(
-                value: _selectedType,
-                decoration: const InputDecoration(),
-                items: AccountType.values.map((type) {
-                  return DropdownMenuItem(
-                    value: type,
-                    child: Text(type.displayName),
-                  );
-                }).toList(),
-                onChanged: (val) {
-                  if (val != null) {
-                    setState(() => _selectedType = val);
-                  }
-                },
-              ),
+              // 3. Initial Balance for non-debt/lending/chit accounts
+              if (!isDebtOrLending && !isChit) ...[
+                const Text(
+                  'Initial Balance',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 6),
+                TextFormField(
+                  controller: _initialBalanceController,
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  decoration: InputDecoration(
+                    prefixText: '$currency ',
+                    border: const OutlineInputBorder(),
+                    hintText: '0.00',
+                  ),
+                ),
+                const SizedBox(height: 16),
+              ],
 
-              const SizedBox(height: 20),
-
-              // 3. Debt & Lending Configuration
+              // 4. Debt & Lending Configuration
               if (isDebtOrLending) ...[
                 Container(
                   padding: const EdgeInsets.all(16),
@@ -134,7 +204,7 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        '${_selectedType == AccountType.debt ? "Debt" : "Lending"} & Interest Configuration',
+                        '${_selectedType == AccountType.debt ? "Debt (Payable)" : "Lending (Receivable)"} & Interest Configuration',
                         style: const TextStyle(
                           fontWeight: FontWeight.bold,
                           color: AppTheme.emeraldDark,
@@ -151,6 +221,7 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
                         decoration: InputDecoration(
                           labelText: 'Initial Principal Amount',
                           prefixText: '$currency ',
+                          border: const OutlineInputBorder(),
                         ),
                         validator: (val) {
                           if (isDebtOrLending &&
@@ -175,6 +246,7 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
                               decoration: const InputDecoration(
                                 labelText: 'Rate of Interest',
                                 hintText: 'e.g., 2.0 or 12.0',
+                                border: OutlineInputBorder(),
                               ),
                               validator: (val) {
                                 if (isDebtOrLending &&
@@ -192,6 +264,7 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
                               value: _interestRateType,
                               decoration: const InputDecoration(
                                 labelText: 'Rate Type',
+                                border: OutlineInputBorder(),
                               ),
                               items: const [
                                 DropdownMenuItem(
@@ -290,7 +363,7 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
                 const SizedBox(height: 20),
               ],
 
-              // 4. Chit Fund Configuration
+              // 5. Chit Fund Configuration
               if (isChit) ...[
                 Container(
                   padding: const EdgeInsets.all(16),
@@ -311,14 +384,17 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
                         ),
                       ),
                       const SizedBox(height: 12),
+
+                      // Total Chit Value
                       TextFormField(
                         controller: _chitTotalValueController,
                         keyboardType: const TextInputType.numberWithOptions(
                             decimal: true),
                         decoration: InputDecoration(
-                          labelText: 'Total Chit Value',
+                          labelText: 'Chit Value',
                           prefixText: '$currency ',
                           hintText: 'e.g., 200000',
+                          border: const OutlineInputBorder(),
                         ),
                         validator: (val) {
                           if (isChit && (val == null || val.trim().isEmpty)) {
@@ -328,46 +404,112 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
                         },
                       ),
                       const SizedBox(height: 12),
+
+                      // Duration (months)
+                      TextFormField(
+                        controller: _chitDurationController,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(
+                          labelText: 'No. of Months (Duration)',
+                          hintText: 'e.g. 20',
+                          border: OutlineInputBorder(),
+                        ),
+                        onChanged: (_) => _updateChitDates(),
+                        validator: (val) {
+                          if (isChit && (val == null || val.trim().isEmpty)) {
+                            return 'Enter duration in months';
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 12),
+
+                      // Dates: Starting Date and Ending Date
                       Row(
                         children: [
                           Expanded(
-                            child: TextFormField(
-                              controller: _chitDurationController,
-                              keyboardType: TextInputType.number,
-                              decoration: const InputDecoration(
-                                labelText: 'Duration (Months)',
-                                hintText: '20',
+                            child: OutlinedButton.icon(
+                              icon: const Icon(Icons.calendar_today, size: 16),
+                              label: Text(
+                                'Start: ${dateFormat.format(_chitStartDate)}',
+                                style: const TextStyle(fontSize: 12),
                               ),
-                              validator: (val) {
-                                if (isChit &&
-                                    (val == null || val.trim().isEmpty)) {
-                                  return 'Enter months';
+                              onPressed: () async {
+                                final picked = await showDatePicker(
+                                  context: context,
+                                  initialDate: _chitStartDate,
+                                  firstDate: DateTime(2015),
+                                  lastDate: DateTime(2050),
+                                );
+                                if (picked != null) {
+                                  setState(() {
+                                    _chitStartDate = picked;
+                                    _updateChitDates();
+                                  });
                                 }
-                                return null;
                               },
                             ),
                           ),
-                          const SizedBox(width: 12),
+                          const SizedBox(width: 8),
                           Expanded(
-                            child: TextFormField(
-                              controller: _chitInstallmentController,
-                              keyboardType:
-                                  const TextInputType.numberWithOptions(
-                                      decimal: true),
-                              decoration: InputDecoration(
-                                labelText: 'Installment / Mo',
-                                prefixText: '$currency ',
+                            child: OutlinedButton.icon(
+                              icon: const Icon(Icons.event, size: 16),
+                              label: Text(
+                                'End: ${dateFormat.format(_chitEndDate)}',
+                                style: const TextStyle(fontSize: 12),
                               ),
-                              validator: (val) {
-                                if (isChit &&
-                                    (val == null || val.trim().isEmpty)) {
-                                  return 'Enter installment';
+                              onPressed: () async {
+                                final picked = await showDatePicker(
+                                  context: context,
+                                  initialDate: _chitEndDate,
+                                  firstDate: _chitStartDate,
+                                  lastDate: DateTime(2050),
+                                );
+                                if (picked != null) {
+                                  setState(() => _chitEndDate = picked);
                                 }
-                                return null;
                               },
                             ),
                           ),
                         ],
+                      ),
+                      const SizedBox(height: 12),
+
+                      // Installment Before Lifting & Installment After Lifting
+                      TextFormField(
+                        controller: _chitInstallmentBeforeController,
+                        keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true),
+                        decoration: InputDecoration(
+                          labelText: 'Installment Before Lifting',
+                          prefixText: '$currency ',
+                          hintText: 'e.g., 8500',
+                          border: const OutlineInputBorder(),
+                        ),
+                        validator: (val) {
+                          if (isChit && (val == null || val.trim().isEmpty)) {
+                            return 'Enter installment before lifting';
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: _chitInstallmentAfterController,
+                        keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true),
+                        decoration: InputDecoration(
+                          labelText: 'Installment After Lifting',
+                          prefixText: '$currency ',
+                          hintText: 'e.g., 10000',
+                          border: const OutlineInputBorder(),
+                        ),
+                        validator: (val) {
+                          if (isChit && (val == null || val.trim().isEmpty)) {
+                            return 'Enter installment after lifting';
+                          }
+                          return null;
+                        },
                       ),
                     ],
                   ),
@@ -375,14 +517,15 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
                 const SizedBox(height: 20),
               ],
 
-              // 5. Color Palette Selection
+              // 6. Color Palette Selection
               const Text(
                 'Color Theme',
                 style: TextStyle(fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 8),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              Wrap(
+                spacing: 12,
+                runSpacing: 8,
                 children: _availableColors.map((colorVal) {
                   final isSelected = _selectedColor == colorVal;
                   return GestureDetector(
@@ -408,7 +551,7 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
 
               const SizedBox(height: 30),
 
-              // 6. Submit Button
+              // 7. Submit Button
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton(
@@ -444,6 +587,9 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
     final principal = isDebtOrLending
         ? (double.tryParse(_principalController.text) ?? 0.0)
         : 0.0;
+    final initialBalance = !isDebtOrLending && !isChit
+        ? (double.tryParse(_initialBalanceController.text) ?? 0.0)
+        : principal;
     final interestRate = isDebtOrLending
         ? (double.tryParse(_interestRateController.text) ?? 0.0)
         : 0.0;
@@ -452,7 +598,7 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
       name: _nameController.text.trim(),
       type: _selectedType,
       color: _selectedColor,
-      balance: principal,
+      balance: initialBalance,
       principalBalance: principal,
       accruedInterest: 0.0,
       interestRate: interestRate,
@@ -465,11 +611,21 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
 
     ChitDetails? chitDetails;
     if (isChit) {
+      final totalVal = double.parse(_chitTotalValueController.text);
+      final duration = int.parse(_chitDurationController.text);
+      final beforeLift =
+          double.parse(_chitInstallmentBeforeController.text);
+      final afterLift =
+          double.parse(_chitInstallmentAfterController.text);
+
       chitDetails = ChitDetails(
         accountId: 0, // Assigned in provider
-        totalValue: double.parse(_chitTotalValueController.text),
-        durationMonths: int.parse(_chitDurationController.text),
-        nominalInstallment: double.parse(_chitInstallmentController.text),
+        totalValue: totalVal,
+        durationMonths: duration,
+        installmentBeforeLifting: beforeLift,
+        installmentAfterLifting: afterLift,
+        startDate: _chitStartDate,
+        endDate: _chitEndDate,
       );
     }
 

@@ -341,6 +341,33 @@ class _ChitDetailScreenState extends State<ChitDetailScreen> {
                 ),
             ],
           ),
+          const SizedBox(height: 12),
+          const Divider(color: Colors.white24, height: 1),
+          const SizedBox(height: 10),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Period: ${DateFormat("dd MMM yyyy").format(_details!.startDate)} - ${DateFormat("dd MMM yyyy").format(_details!.endDate)}',
+                style: const TextStyle(color: Colors.white70, fontSize: 11),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: Colors.white.withAlpha(25),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  'Active: $currency ${formatter.format(_details!.activeInstallment)}/mo',
+                  style: const TextStyle(
+                    color: AppTheme.amberGold,
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          ),
         ],
       ),
     );
@@ -351,7 +378,7 @@ class _ChitDetailScreenState extends State<ChitDetailScreen> {
     ChitDetails details,
     String currency,
   ) {
-    final nominal = details.nominalInstallment;
+    final nominal = details.activeInstallment;
     final dividendController = TextEditingController(text: '0.0');
     final noteController = TextEditingController();
     double netToPay = nominal;
@@ -368,7 +395,9 @@ class _ChitDetailScreenState extends State<ChitDetailScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Nominal Installment: $currency ${nominal.toStringAsFixed(2)}',
+                    details.isLifted
+                        ? 'Updated Installment (Post-Lifting): $currency ${nominal.toStringAsFixed(2)}'
+                        : 'Current Installment (Pre-Lifting): $currency ${nominal.toStringAsFixed(2)}',
                     style: const TextStyle(fontWeight: FontWeight.w600),
                   ),
                   const SizedBox(height: 12),

@@ -1,4 +1,4 @@
-import 'package:test/test.dart';
+import 'package:flutter_test/flutter_test.dart';
 import '../lib/services/sms_parser_service.dart';
 import '../lib/models/transaction_model.dart';
 

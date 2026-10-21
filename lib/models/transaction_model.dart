@@ -55,6 +55,11 @@ class TransactionModel {
   final bool isAutoInterest;
   final String? externalRefId;
   final String source;
+  final String paymentMode; // 'UPI', 'Cash', 'Credit Card', 'Debit Card', 'Net Banking', 'Cheque', 'Others'
+  final String? otherPaymentModeDetails;
+  final String? receiptPath;
+  final String? debitAccountName;
+  final String? creditAccountName;
   final DateTime createdAt;
 
   TransactionModel({
@@ -71,6 +76,11 @@ class TransactionModel {
     this.isAutoInterest = false,
     this.externalRefId,
     this.source = 'manual',
+    this.paymentMode = 'UPI',
+    this.otherPaymentModeDetails,
+    this.receiptPath,
+    this.debitAccountName,
+    this.creditAccountName,
     DateTime? createdAt,
   }) : createdAt = createdAt ?? DateTime.now();
 
@@ -88,6 +98,11 @@ class TransactionModel {
     bool? isAutoInterest,
     String? externalRefId,
     String? source,
+    String? paymentMode,
+    String? otherPaymentModeDetails,
+    String? receiptPath,
+    String? debitAccountName,
+    String? creditAccountName,
     DateTime? createdAt,
   }) {
     return TransactionModel(
@@ -104,6 +119,11 @@ class TransactionModel {
       isAutoInterest: isAutoInterest ?? this.isAutoInterest,
       externalRefId: externalRefId ?? this.externalRefId,
       source: source ?? this.source,
+      paymentMode: paymentMode ?? this.paymentMode,
+      otherPaymentModeDetails: otherPaymentModeDetails ?? this.otherPaymentModeDetails,
+      receiptPath: receiptPath ?? this.receiptPath,
+      debitAccountName: debitAccountName ?? this.debitAccountName,
+      creditAccountName: creditAccountName ?? this.creditAccountName,
       createdAt: createdAt ?? this.createdAt,
     );
   }
@@ -123,6 +143,11 @@ class TransactionModel {
       'is_auto_interest': isAutoInterest ? 1 : 0,
       'external_ref_id': externalRefId,
       'source': source,
+      'payment_mode': paymentMode,
+      'other_payment_mode_details': otherPaymentModeDetails,
+      'receipt_path': receiptPath,
+      'debit_account_name': debitAccountName,
+      'credit_account_name': creditAccountName,
       'created_at': createdAt.toIso8601String(),
     };
   }
@@ -142,6 +167,11 @@ class TransactionModel {
       isAutoInterest: (map['is_auto_interest'] as int?) == 1,
       externalRefId: map['external_ref_id'] as String?,
       source: map['source'] as String? ?? 'manual',
+      paymentMode: map['payment_mode'] as String? ?? 'UPI',
+      otherPaymentModeDetails: map['other_payment_mode_details'] as String?,
+      receiptPath: map['receipt_path'] as String?,
+      debitAccountName: map['debit_account_name'] as String?,
+      creditAccountName: map['credit_account_name'] as String?,
       createdAt: map['created_at'] != null
           ? DateTime.parse(map['created_at'] as String)
           : DateTime.now(),

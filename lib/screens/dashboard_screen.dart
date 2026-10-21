@@ -10,6 +10,8 @@ import 'add_account_screen.dart';
 import 'add_transaction_screen.dart';
 import 'chit_detail_screen.dart';
 import 'settings_screen.dart';
+import 'calendar_reminders_screen.dart';
+import 'statement_export_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -19,6 +21,7 @@ class DashboardScreen extends StatefulWidget {
 }
 
 class _DashboardScreenState extends State<DashboardScreen> {
+  int _currentTabIndex = 0;
   String _selectedCategory = 'all';
 
   @override
@@ -36,6 +39,48 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final formatter = NumberFormat('#,##,###.##');
 
     return Scaffold(
+      body: IndexedStack(
+        index: _currentTabIndex,
+        children: [
+          _buildDashboardHome(context, finance, currency, formatter),
+          const CalendarRemindersScreen(),
+          const StatementExportScreen(),
+        ],
+      ),
+      bottomNavigationBar: BottomNavigationBar(
+        currentIndex: _currentTabIndex,
+        onTap: (index) => setState(() => _currentTabIndex = index),
+        selectedItemColor: AppTheme.emeraldPrimary,
+        unselectedItemColor: Colors.grey.shade600,
+        selectedLabelStyle: const TextStyle(fontWeight: FontWeight.bold),
+        items: const [
+          BottomNavigationBarItem(
+            icon: Icon(Icons.dashboard_outlined),
+            activeIcon: Icon(Icons.dashboard),
+            label: 'Dashboard',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.calendar_month_outlined),
+            activeIcon: Icon(Icons.calendar_month),
+            label: 'Reminders',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.file_download_outlined),
+            activeIcon: Icon(Icons.file_download),
+            label: 'Statements',
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDashboardHome(
+    BuildContext context,
+    FinanceProvider finance,
+    String currency,
+    NumberFormat formatter,
+  ) {
+    return Scaffold(
       appBar: AppBar(
         title: Row(
           mainAxisSize: MainAxisSize.min,
@@ -47,8 +92,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 width: 32,
                 height: 32,
                 fit: BoxFit.cover,
-                errorBuilder: (ctx, err, stack) =>
-                    const Icon(Icons.account_balance_wallet, color: AppTheme.amberGold),
+                errorBuilder: (ctx, err, stack) => const Icon(
+                    Icons.account_balance_wallet,
+                    color: AppTheme.amberGold),
               ),
             ),
             const SizedBox(width: 10),
@@ -79,7 +125,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
               onRefresh: () => finance.loadAllData(),
               child: SingleChildScrollView(
                 physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -135,7 +182,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         ),
                         if (finance.recentTransactions.isNotEmpty)
                           Text(
-                            'Last ${finance.recentTransactions.length}',
+                            'Last ${finance.recentTransactions.take(15).length}',
                             style: TextStyle(
                               fontSize: 13,
                               color: Colors.grey.shade600,
@@ -156,6 +203,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
           'New Transaction',
           style: TextStyle(fontWeight: FontWeight.bold),
         ),
+        backgroundColor: AppTheme.emeraldPrimary,
+        foregroundColor: Colors.white,
         onPressed: () {
           Navigator.push(
             context,
@@ -195,7 +244,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               const Text(
-                'TOTAL AVAILABLE FUNDS',
+                'TOTAL AVAILABLE POOL FUNDS',
                 style: TextStyle(
                   color: Colors.white70,
                   fontSize: 12,
@@ -350,12 +399,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Widget _buildCategoryFilter() {
     final categories = [
       {'key': 'all', 'label': 'All Accounts'},
-      {'key': 'pool', 'label': 'Pool Funds'},
+      {'key': 'pool', 'label': 'Pool (Cash)'},
+      {'key': 'banks_salary', 'label': 'Banks & Salary'},
+      {'key': 'credit_cards', 'label': 'Credit Cards'},
       {'key': 'debts_lending', 'label': 'Debts & Lendings'},
       {'key': 'chit', 'label': 'Chits'},
+      {'key': 'investments', 'label': 'Demats & Insurance'},
+      {'key': 'others', 'label': 'Others (Editable)'},
       {'key': 'temporary_adjustment', 'label': 'Adjustments'},
-      {'key': 'maintenance', 'label': 'Maintenance'},
-      {'key': 'custom', 'label': 'Custom'},
     ];
 
     return SingleChildScrollView(
@@ -376,7 +427,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
               selectedColor: AppTheme.emeraldPrimary.withAlpha(40),
               checkmarkColor: AppTheme.emeraldPrimary,
               labelStyle: TextStyle(
-                color: isSelected ? AppTheme.emeraldPrimary : Colors.grey.shade700,
+                color:
+                    isSelected ? AppTheme.emeraldPrimary : Colors.grey.shade700,
                 fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
                 fontSize: 13,
               ),
@@ -397,23 +449,26 @@ class _DashboardScreenState extends State<DashboardScreen> {
       case 'pool':
         filtered = finance.poolAccounts;
         break;
+      case 'banks_salary':
+        filtered = [...finance.salaryAccounts, ...finance.bankAccounts];
+        break;
+      case 'credit_cards':
+        filtered = finance.creditCardAccounts;
+        break;
       case 'debts_lending':
         filtered = [...finance.debtAccounts, ...finance.lendingAccounts];
         break;
       case 'chit':
         filtered = finance.chitAccounts;
         break;
+      case 'investments':
+        filtered = [...finance.dematAccounts, ...finance.insuranceAccounts];
+        break;
+      case 'others':
+        filtered = finance.otherAccounts;
+        break;
       case 'temporary_adjustment':
         filtered = finance.adjustmentAccounts;
-        break;
-      case 'maintenance':
-        filtered = finance.maintenanceAccounts;
-        break;
-      case 'custom':
-        filtered = [
-          ...finance.customAccounts,
-          ...finance.miscellaneousAccounts
-        ];
         break;
       default:
         filtered = finance.accounts;
@@ -452,40 +507,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
     String currency,
     NumberFormat formatter,
   ) {
-    IconData iconData = Icons.account_balance_wallet;
-    switch (acc.type) {
-      case AccountType.pool:
-        iconData = Icons.account_balance;
-        break;
-      case AccountType.debt:
-        iconData = Icons.arrow_downward;
-        break;
-      case AccountType.lending:
-        iconData = Icons.arrow_outward;
-        break;
-      case AccountType.chit:
-        iconData = Icons.confirmation_number;
-        break;
-      case AccountType.temporaryAdjustment:
-        iconData = Icons.swap_horiz;
-        break;
-      case AccountType.maintenance:
-        iconData = Icons.build_circle;
-        break;
-      case AccountType.miscellaneous:
-        iconData = Icons.category;
-        break;
-      case AccountType.custom:
-        iconData = Icons.folder;
-        break;
-    }
+    final IconData iconData = acc.type.iconData;
 
     String balanceDisplay = '';
     String subtext = '';
 
     if (acc.isInterestBearing) {
-      balanceDisplay =
-          '$currency ${formatter.format(acc.totalOutstanding)}';
+      balanceDisplay = '$currency ${formatter.format(acc.totalOutstanding)}';
       subtext =
           'Principal: $currency ${formatter.format(acc.principalBalance)} | Int: $currency ${formatter.format(acc.accruedInterest)} (@ ${acc.interestRate}% ${acc.interestRateType == "per_month" ? "pm" : "pa"})';
     } else {
@@ -574,7 +602,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return ListView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
-      itemCount: finance.recentTransactions.take(10).length,
+      itemCount: finance.recentTransactions.take(15).length,
       itemBuilder: (context, index) {
         final tx = finance.recentTransactions[index];
         final isCredit = tx.type == TransactionType.credit;
@@ -611,20 +639,41 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
+                Container(
+                  margin: const EdgeInsets.only(left: 6),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade200,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    tx.paymentMode,
+                    style: const TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.black87,
+                    ),
+                  ),
+                ),
                 if (tx.source != 'manual')
                   Container(
                     margin: const EdgeInsets.only(left: 6),
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                     decoration: BoxDecoration(
                       color: AppTheme.amberGold.withAlpha(35),
                       borderRadius: BorderRadius.circular(4),
-                      border: Border.all(color: AppTheme.amberGold.withAlpha(120), width: 0.8),
+                      border: Border.all(
+                          color: AppTheme.amberGold.withAlpha(120), width: 0.8),
                     ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Icon(
-                          tx.source == 'sms' ? Icons.sms : Icons.notifications_active,
+                          tx.source == 'sms'
+                              ? Icons.sms
+                              : Icons.notifications_active,
                           size: 10,
                           color: AppTheme.emeraldPrimary,
                         ),
@@ -660,13 +709,25 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         : AppTheme.debitRed,
               ),
             ),
+            onTap: () async {
+              await Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => AddTransactionScreen(transactionToEdit: tx),
+                ),
+              );
+              if (context.mounted) {
+                finance.loadAllData();
+              }
+            },
           ),
         );
       },
     );
   }
 
-  Future<void> _handleQuickSyncSms(BuildContext context, FinanceProvider finance) async {
+  Future<void> _handleQuickSyncSms(
+      BuildContext context, FinanceProvider finance) async {
     final hasPerm = await finance.hasSmsPermission();
     if (!hasPerm) {
       final granted = await finance.requestSmsPermission();
@@ -674,7 +735,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('SMS permission is required to auto-detect transactions.'),
+              content:
+                  Text('SMS permission is required to auto-detect transactions.'),
               backgroundColor: AppTheme.debitRed,
             ),
           );
@@ -692,7 +754,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
             SizedBox(
               width: 16,
               height: 16,
-              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+              child:
+                  CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
             ),
             SizedBox(width: 12),
             Text('Scanning SMS for new transactions...'),
@@ -713,7 +776,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ? 'Added ${result.newAdded} new transactions (${result.duplicatesSkipped} duplicates skipped).'
               : 'Up to date! No new transactions found (${result.duplicatesSkipped} duplicates skipped).',
         ),
-        backgroundColor: result.newAdded > 0 ? AppTheme.creditGreen : AppTheme.emeraldPrimary,
+        backgroundColor: result.newAdded > 0
+            ? AppTheme.creditGreen
+            : AppTheme.emeraldPrimary,
       ),
     );
   }
