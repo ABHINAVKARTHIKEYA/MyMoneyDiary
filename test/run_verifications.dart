@@ -3,6 +3,7 @@ import '../lib/services/repayment_allocator.dart';
 import '../lib/services/chit_service.dart';
 import '../lib/models/chit_details.dart';
 import '../lib/models/transaction_model.dart';
+import '../lib/services/sms_parser_service.dart';
 
 void main() {
   print('=============================================');
@@ -207,6 +208,105 @@ void main() {
     assert(summary.isLifted, 'Expected lifted');
     assert(summary.prizeMoneyReceived == 165000.0, 'Expected 165000 prize');
     assert(summary.netGainLoss == 114000.0, 'Expected 114000 net gain, got ${summary.netGainLoss}');
+  });
+
+  // 4. Auto Transaction Detection & Zero-Duplicate Verification
+  print('\n--- 4. Auto Transaction Detection & Zero Duplicate Verification ---');
+  test('HDFC Debit SMS with UPI Ref and Merchant parsing', () {
+    final sms = 'Sent Rs.450.00 from HDFC Bank A/C **1234 to Swiggy via UPI Ref 412345678901 on 21-OCT-26.';
+    final parsed = SmsParserService.parse(
+      sender: 'VK-HDFCBK',
+      body: sms,
+      timestamp: DateTime(2026, 10, 21, 14, 30),
+      source: 'sms',
+    );
+
+    assert(parsed != null, 'Expected parsed transaction');
+    final tx = parsed!;
+    assert(tx.amount == 450.0, 'Expected 450.0 amount, got ${tx.amount}');
+    assert(tx.type == TransactionType.debit, 'Expected debit type');
+    assert(tx.bankName == 'HDFC', 'Expected HDFC bank, got ${tx.bankName}');
+    assert(tx.accountLast4 == '1234', 'Expected 1234 last 4');
+    assert(tx.referenceId == 'REF_412345678901', 'Expected REF_412345678901, got ${tx.referenceId}');
+    assert(tx.category == 'Food & Dining', 'Expected Food & Dining category, got ${tx.category}');
+  });
+
+  test('SBI Credit SMS with amount and sender parsing', () {
+    final sms = 'Dear SBI User, your A/C ending 5678 credited by Rs 5,000.00 on 21Oct26 by transfer from Rahul via UPI Ref 987654321012.';
+    final parsed = SmsParserService.parse(
+      sender: 'SBIINB',
+      body: sms,
+      timestamp: DateTime(2026, 10, 21, 15, 0),
+      source: 'sms',
+    );
+
+    assert(parsed != null, 'Expected parsed transaction');
+    final tx = parsed!;
+    assert(tx.amount == 5000.0, 'Expected 5000.0, got ${tx.amount}');
+    assert(tx.type == TransactionType.credit, 'Expected credit');
+    assert(tx.bankName == 'SBI', 'Expected SBI bank');
+    assert(tx.accountLast4 == '5678', 'Expected 5678 account');
+    assert(tx.referenceId == 'REF_987654321012', 'Expected REF_987654321012');
+  });
+
+  test('PhonePe / GPay Notification parsing', () {
+    final notif = 'Paid ₹1,200 to Petrol Bunk via UPI Ref 554433221100';
+    final parsed = SmsParserService.parse(
+      sender: 'PhonePe',
+      body: notif,
+      timestamp: DateTime(2026, 10, 21, 18, 0),
+      source: 'notification',
+    );
+
+    assert(parsed != null, 'Expected parsed transaction');
+    final tx = parsed!;
+    assert(tx.amount == 1200.0, 'Expected 1200.0');
+    assert(tx.type == TransactionType.debit, 'Expected debit');
+    assert(tx.category == 'Travel & Fuel', 'Expected Travel & Fuel category, got ${tx.category}');
+    assert(tx.referenceId == 'REF_554433221100', 'Expected REF_554433221100');
+  });
+
+  test('Rejects non-financial OTP / security messages', () {
+    final otpMessage = '394821 is your secret OTP for NetBanking login. Do not share with anyone.';
+    final parsed = SmsParserService.parse(
+      sender: 'AXISBK',
+      body: otpMessage,
+      timestamp: DateTime(2026, 10, 21, 12, 0),
+      source: 'sms',
+    );
+
+    assert(parsed == null, 'OTP without financial debit/credit must be rejected');
+  });
+
+  test('Guarantees identical Reference ID between SMS and Notification for the same UPI transaction (De-duplication)', () {
+    // Both SMS and Push notification arrive for the exact same transaction
+    final bankSms = 'A/C 1234 debited for Rs.350.00 on 21-10-26 to Chai Point (UPI Ref no 429581928374)';
+    final gpayNotif = 'Paid ₹350.00 to Chai Point. UPI Ref: 429581928374';
+
+    final parsedSms = SmsParserService.parse(sender: 'HDFCBK', body: bankSms, source: 'sms');
+    final parsedNotif = SmsParserService.parse(sender: 'Google Pay', body: gpayNotif, source: 'notification');
+
+    assert(parsedSms != null && parsedNotif != null);
+    final smsTx = parsedSms!;
+    final notifTx = parsedNotif!;
+    // Both generate the exact same referenceId
+    assert(smsTx.referenceId == notifTx.referenceId,
+      'SMS ref (${smsTx.referenceId}) must match Notification ref (${notifTx.referenceId})');
+    assert(smsTx.referenceId == 'REF_429581928374');
+  });
+
+  test('Generates deterministic signature when UPI ref is absent (prevents repeated scan duplication)', () {
+    final sms = 'Your A/C ending 4321 debited Rs. 200 on 21-Oct-26 at Local Store.';
+    final fixedTime = DateTime(2026, 10, 21, 11, 45);
+
+    final scan1 = SmsParserService.parse(sender: 'HDFCBK', body: sms, timestamp: fixedTime, source: 'sms');
+    final scan2 = SmsParserService.parse(sender: 'HDFCBK', body: sms, timestamp: fixedTime, source: 'sms');
+
+    assert(scan1 != null && scan2 != null);
+    final tx1 = scan1!;
+    final tx2 = scan2!;
+    assert(tx1.referenceId == tx2.referenceId, 'Repeated scans must generate identical signature');
+    assert(tx1.referenceId.startsWith('SIG_200.00_debit_20261021_1145_HDFCBK'));
   });
 
   print('\n=============================================');

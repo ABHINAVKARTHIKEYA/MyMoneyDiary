@@ -25,9 +25,24 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 1,
+      version: 2,
       onCreate: _createDB,
+      onUpgrade: _onUpgrade,
     );
+  }
+
+  Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 2) {
+      try {
+        await db.execute('ALTER TABLE transactions ADD COLUMN external_ref_id TEXT;');
+      } catch (_) {}
+      try {
+        await db.execute("ALTER TABLE transactions ADD COLUMN source TEXT NOT NULL DEFAULT 'manual';");
+      } catch (_) {}
+      try {
+        await db.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_transactions_external_ref_id ON transactions (external_ref_id);');
+      } catch (_) {}
+    }
   }
 
   Future<void> _createDB(Database db, int version) async {
@@ -67,6 +82,8 @@ class DatabaseHelper {
         note TEXT,
         date TEXT NOT NULL,
         is_auto_interest INTEGER NOT NULL DEFAULT 0,
+        external_ref_id TEXT UNIQUE,
+        source TEXT NOT NULL DEFAULT 'manual',
         created_at TEXT NOT NULL,
         FOREIGN KEY (account_id) REFERENCES accounts (id) ON DELETE CASCADE,
         FOREIGN KEY (to_account_id) REFERENCES accounts (id) ON DELETE SET NULL
@@ -251,9 +268,37 @@ class DatabaseHelper {
 
   // ==================== TRANSACTIONS ====================
 
+  Future<bool> transactionExistsByExternalRef(String externalRefId) async {
+    if (externalRefId.trim().isEmpty) return false;
+    final db = await instance.database;
+    final result = await db.query(
+      'transactions',
+      columns: ['id'],
+      where: 'external_ref_id = ?',
+      whereArgs: [externalRefId.trim()],
+      limit: 1,
+    );
+    return result.isNotEmpty;
+  }
+
   Future<int> insertTransaction(TransactionModel tx) async {
     final db = await instance.database;
     return await db.transaction((txn) async {
+      // 0. Strict duplicate check if externalRefId is present
+      if (tx.externalRefId != null && tx.externalRefId!.trim().isNotEmpty) {
+        final existing = await txn.query(
+          'transactions',
+          columns: ['id'],
+          where: 'external_ref_id = ?',
+          whereArgs: [tx.externalRefId!.trim()],
+          limit: 1,
+        );
+        if (existing.isNotEmpty) {
+          // Already recorded - avoid duplicate entry
+          return -1;
+        }
+      }
+
       // 1. Insert transaction
       final txId = await txn.insert('transactions', tx.toMap());
 

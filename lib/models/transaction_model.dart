@@ -53,6 +53,8 @@ class TransactionModel {
   final String note;
   final DateTime date;
   final bool isAutoInterest;
+  final String? externalRefId;
+  final String source;
   final DateTime createdAt;
 
   TransactionModel({
@@ -67,6 +69,8 @@ class TransactionModel {
     this.note = '',
     required this.date,
     this.isAutoInterest = false,
+    this.externalRefId,
+    this.source = 'manual',
     DateTime? createdAt,
   }) : createdAt = createdAt ?? DateTime.now();
 
@@ -82,6 +86,8 @@ class TransactionModel {
     String? note,
     DateTime? date,
     bool? isAutoInterest,
+    String? externalRefId,
+    String? source,
     DateTime? createdAt,
   }) {
     return TransactionModel(
@@ -96,6 +102,8 @@ class TransactionModel {
       note: note ?? this.note,
       date: date ?? this.date,
       isAutoInterest: isAutoInterest ?? this.isAutoInterest,
+      externalRefId: externalRefId ?? this.externalRefId,
+      source: source ?? this.source,
       createdAt: createdAt ?? this.createdAt,
     );
   }
@@ -113,6 +121,8 @@ class TransactionModel {
       'note': note,
       'date': date.toIso8601String(),
       'is_auto_interest': isAutoInterest ? 1 : 0,
+      'external_ref_id': externalRefId,
+      'source': source,
       'created_at': createdAt.toIso8601String(),
     };
   }
@@ -130,6 +140,8 @@ class TransactionModel {
       note: map['note'] as String? ?? '',
       date: DateTime.parse(map['date'] as String),
       isAutoInterest: (map['is_auto_interest'] as int?) == 1,
+      externalRefId: map['external_ref_id'] as String?,
+      source: map['source'] as String? ?? 'manual',
       createdAt: map['created_at'] != null
           ? DateTime.parse(map['created_at'] as String)
           : DateTime.now(),

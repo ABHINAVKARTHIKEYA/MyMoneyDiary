@@ -4,9 +4,17 @@ import '../models/account.dart';
 import '../models/chit_details.dart';
 import '../models/transaction_model.dart';
 import '../models/app_settings.dart';
+import '../services/auto_tracker_service.dart';
 
 class FinanceProvider with ChangeNotifier {
   final DatabaseHelper _dbHelper = DatabaseHelper.instance;
+
+  FinanceProvider() {
+    // Listen for live background detected transactions (SMS or Notification)
+    AutoTrackerService.instance.onNewTransactionDetected = () {
+      loadAllData();
+    };
+  }
 
   List<Account> _accounts = [];
   List<TransactionModel> _recentTransactions = [];
@@ -128,4 +136,36 @@ class FinanceProvider with ChangeNotifier {
     await _dbHelper.updateSettings(settings);
     notifyListeners();
   }
+
+  // ==================== AUTO DETECTION & SYNC ====================
+
+  Future<AutoSyncResult> syncSmsTransactions({int limit = 200}) async {
+    // Find Pool Account or first account to record detected transactions
+    final targetAccount = poolAccounts.isNotEmpty ? poolAccounts.first : (_accounts.isNotEmpty ? _accounts.first : null);
+    if (targetAccount == null || targetAccount.id == null) {
+      return AutoSyncResult(
+        totalScanned: 0,
+        financialFound: 0,
+        newAdded: 0,
+        duplicatesSkipped: 0,
+        newTransactions: [],
+      );
+    }
+
+    final result = await AutoTrackerService.instance.syncSmsInbox(
+      limit: limit,
+      defaultAccountId: targetAccount.id!,
+    );
+
+    if (result.newAdded > 0) {
+      await loadAllData();
+    }
+
+    return result;
+  }
+
+  Future<bool> hasSmsPermission() => AutoTrackerService.instance.hasSmsPermission();
+  Future<bool> requestSmsPermission() => AutoTrackerService.instance.requestSmsPermission();
+  Future<bool> isNotificationListenerEnabled() => AutoTrackerService.instance.isNotificationListenerEnabled();
+  Future<void> openNotificationListenerSettings() => AutoTrackerService.instance.openNotificationListenerSettings();
 }

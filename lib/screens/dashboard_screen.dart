@@ -57,6 +57,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ),
         actions: [
           IconButton(
+            icon: const Icon(Icons.sync),
+            tooltip: 'Auto-Sync SMS Transactions',
+            onPressed: () => _handleQuickSyncSms(context, finance),
+          ),
+          IconButton(
             icon: const Icon(Icons.settings_outlined),
             tooltip: 'Settings',
             onPressed: () {
@@ -597,9 +602,45 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         : AppTheme.debitRed,
               ),
             ),
-            title: Text(
-              tx.category.isNotEmpty ? tx.category : 'General',
-              style: const TextStyle(fontWeight: FontWeight.w600),
+            title: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    tx.category.isNotEmpty ? tx.category : 'General',
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                if (tx.source != 'manual')
+                  Container(
+                    margin: const EdgeInsets.only(left: 6),
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: AppTheme.amberGold.withAlpha(35),
+                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(color: AppTheme.amberGold.withAlpha(120), width: 0.8),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          tx.source == 'sms' ? Icons.sms : Icons.notifications_active,
+                          size: 10,
+                          color: AppTheme.emeraldPrimary,
+                        ),
+                        const SizedBox(width: 3),
+                        Text(
+                          tx.source == 'sms' ? 'SMS' : 'UPI',
+                          style: const TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                            color: AppTheme.emeraldPrimary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
             ),
             subtitle: Text(
               '${dateFormat.format(tx.date)}${tx.note.isNotEmpty ? " • ${tx.note}" : ""}',
@@ -622,6 +663,58 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ),
         );
       },
+    );
+  }
+
+  Future<void> _handleQuickSyncSms(BuildContext context, FinanceProvider finance) async {
+    final hasPerm = await finance.hasSmsPermission();
+    if (!hasPerm) {
+      final granted = await finance.requestSmsPermission();
+      if (!granted) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('SMS permission is required to auto-detect transactions.'),
+              backgroundColor: AppTheme.debitRed,
+            ),
+          );
+        }
+        return;
+      }
+    }
+
+    if (!context.mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Row(
+          children: [
+            SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+            ),
+            SizedBox(width: 12),
+            Text('Scanning SMS for new transactions...'),
+          ],
+        ),
+        duration: Duration(seconds: 2),
+      ),
+    );
+
+    final result = await finance.syncSmsTransactions(limit: 200);
+
+    if (!context.mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          result.newAdded > 0
+              ? 'Added ${result.newAdded} new transactions (${result.duplicatesSkipped} duplicates skipped).'
+              : 'Up to date! No new transactions found (${result.duplicatesSkipped} duplicates skipped).',
+        ),
+        backgroundColor: result.newAdded > 0 ? AppTheme.creditGreen : AppTheme.emeraldPrimary,
+      ),
     );
   }
 }
