@@ -765,7 +765,7 @@ class DatabaseHelper {
 
   Future<void> _applyTransactionEffect(
     TransactionModel tx,
-    TransactionExecutor txn, {
+    DatabaseExecutor txn, {
     required bool isReversal,
   }) async {
     final factor = isReversal ? -1.0 : 1.0;

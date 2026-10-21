@@ -27,6 +27,23 @@ class TransactionEditHistory {
     this.newNote = '',
   }) : editedAt = editedAt ?? DateTime.now();
 
+  String get changesSummary {
+    final List<String> changes = [];
+    if (oldAmount != newAmount) {
+      changes.add('Amount: ₹${oldAmount.toStringAsFixed(2)} → ₹${newAmount.toStringAsFixed(2)}');
+    }
+    if (oldMode != newMode) {
+      changes.add('Mode: $oldMode → $newMode');
+    }
+    if (oldDate != newDate) {
+      changes.add('Date modified');
+    }
+    if (oldNote != newNote && newNote.isNotEmpty) {
+      changes.add('Note: "$newNote"');
+    }
+    return changes.join(' | ');
+  }
+
   Map<String, dynamic> toMap() {
     return {
       'id': id,
