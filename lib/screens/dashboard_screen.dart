@@ -136,7 +136,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     const SizedBox(height: 20),
 
                     // 2. Category Filter Bar
-                    _buildCategoryFilter(),
+                    _buildCategoryFilter(finance),
 
                     const SizedBox(height: 16),
 
@@ -396,7 +396,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Widget _buildCategoryFilter() {
+  Widget _buildCategoryFilter(FinanceProvider finance) {
     final categories = [
       {'key': 'all', 'label': 'All Accounts'},
       {'key': 'pool', 'label': 'Pool (Cash)'},

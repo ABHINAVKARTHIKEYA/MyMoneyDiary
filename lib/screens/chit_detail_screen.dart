@@ -295,9 +295,9 @@ class _ChitDetailScreenState extends State<ChitDetailScreen> {
                                 label: const Text('Send SMS', style: TextStyle(fontSize: 12, color: AppTheme.emeraldPrimary)),
                                 onPressed: () => SmsNotificationService.showSmsPreviewDialog(
                                   context,
-                                  account: _account,
+                                  account: widget.account,
                                   tx: tx,
-                                  initialPhone: _account.phoneNumber,
+                                  initialPhone: widget.account.phoneNumber,
                                 ),
                               ),
                               TextButton.icon(
