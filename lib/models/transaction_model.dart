@@ -60,6 +60,7 @@ class TransactionModel {
   final String? receiptPath;
   final String? debitAccountName;
   final String? creditAccountName;
+  final int? linkedTxId;
   final DateTime createdAt;
 
   TransactionModel({
@@ -81,6 +82,7 @@ class TransactionModel {
     this.receiptPath,
     this.debitAccountName,
     this.creditAccountName,
+    this.linkedTxId,
     DateTime? createdAt,
   }) : createdAt = createdAt ?? DateTime.now();
 
@@ -103,6 +105,7 @@ class TransactionModel {
     String? receiptPath,
     String? debitAccountName,
     String? creditAccountName,
+    int? linkedTxId,
     DateTime? createdAt,
   }) {
     return TransactionModel(
@@ -124,6 +127,7 @@ class TransactionModel {
       receiptPath: receiptPath ?? this.receiptPath,
       debitAccountName: debitAccountName ?? this.debitAccountName,
       creditAccountName: creditAccountName ?? this.creditAccountName,
+      linkedTxId: linkedTxId ?? this.linkedTxId,
       createdAt: createdAt ?? this.createdAt,
     );
   }
@@ -148,6 +152,7 @@ class TransactionModel {
       'receipt_path': receiptPath,
       'debit_account_name': debitAccountName,
       'credit_account_name': creditAccountName,
+      'linked_tx_id': linkedTxId,
       'created_at': createdAt.toIso8601String(),
     };
   }
@@ -172,6 +177,7 @@ class TransactionModel {
       receiptPath: map['receipt_path'] as String?,
       debitAccountName: map['debit_account_name'] as String?,
       creditAccountName: map['credit_account_name'] as String?,
+      linkedTxId: map['linked_tx_id'] as int?,
       createdAt: map['created_at'] != null
           ? DateTime.parse(map['created_at'] as String)
           : DateTime.now(),

@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
+import 'package:share_plus/share_plus.dart';
 import '../models/account.dart';
 import '../models/transaction_model.dart';
 import '../models/transaction_edit_history.dart';
@@ -512,6 +513,13 @@ class _AccountDetailScreenState extends State<AccountDetailScreen> {
                 ],
               ),
             ),
+            if (acc.loanStartDate != null) ...[
+              const SizedBox(height: 10),
+              Text(
+                '${acc.type == AccountType.debt ? "Loan Taken On" : "Loan Lent On"}: ${DateFormat("dd MMM yyyy").format(acc.loanStartDate!)}',
+                style: const TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.w500),
+              ),
+            ],
           ],
         ],
       ),
@@ -879,23 +887,71 @@ class _AccountDetailScreenState extends State<AccountDetailScreen> {
   // ==================== VIEW RECEIPT ====================
   void _viewReceipt(BuildContext context, String receiptPath) {
     final file = File(receiptPath);
+    final isPdf = receiptPath.toLowerCase().endsWith('.pdf');
+    final fileName = receiptPath.split(Platform.pathSeparator).last;
+
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Attached Receipt Proof'),
+        title: Row(
+          children: [
+            Icon(isPdf ? Icons.picture_as_pdf : Icons.image,
+                color: isPdf ? AppTheme.debitRed : AppTheme.emeraldPrimary, size: 22),
+            const SizedBox(width: 8),
+            const Text('Receipt Proof'),
+          ],
+        ),
         content: file.existsSync()
-            ? ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: Image.file(
-                  file,
-                  fit: BoxFit.contain,
-                  errorBuilder: (_, __, ___) => const Center(
-                    child: Text('Unable to display image preview'),
-                  ),
-                ),
-              )
+            ? (isPdf
+                ? Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.red.shade50,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.red.shade200),
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.picture_as_pdf, color: Colors.red, size: 48),
+                        const SizedBox(height: 10),
+                        Text(
+                          fileName,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          'PDF Document (${(file.lengthSync() / 1024).toStringAsFixed(1)} KB)',
+                          style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+                        ),
+                      ],
+                    ),
+                  )
+                : ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: Image.file(
+                      file,
+                      fit: BoxFit.contain,
+                      errorBuilder: (_, __, ___) => const Center(
+                        child: Text('Unable to display image preview'),
+                      ),
+                    ),
+                  ))
             : Text('Receipt file not found at path: $receiptPath'),
         actions: [
+          if (file.existsSync())
+            ElevatedButton.icon(
+              icon: const Icon(Icons.open_in_new, size: 16),
+              label: Text(isPdf ? 'Open / Share PDF' : 'Share Image'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppTheme.emeraldPrimary,
+                foregroundColor: Colors.white,
+              ),
+              onPressed: () {
+                Share.shareXFiles([XFile(receiptPath)], text: 'Proof: $fileName');
+              },
+            ),
           TextButton(
             onPressed: () => Navigator.pop(ctx),
             child: const Text('Close'),

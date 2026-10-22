@@ -28,7 +28,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 3,
+      version: 4,
       onCreate: _createDB,
       onUpgrade: _onUpgrade,
     );
@@ -118,6 +118,21 @@ class DatabaseHelper {
       // 5. Seed new required account types if missing
       await _seedNewAccountTypesIfMissing(db);
     }
+
+    if (oldVersion < 4) {
+      // 1. Accounts new column: loan_start_date
+      try {
+        await db.execute('ALTER TABLE accounts ADD COLUMN loan_start_date TEXT;');
+      } catch (_) {}
+
+      // 2. Transactions new column: linked_tx_id
+      try {
+        await db.execute('ALTER TABLE transactions ADD COLUMN linked_tx_id INTEGER;');
+      } catch (_) {}
+
+      // 3. Seed Govt Account if missing
+      await _seedGovtAccountIfMissing(db);
+    }
   }
 
   Future<void> _createDB(Database db, int version) async {
@@ -138,6 +153,7 @@ class DatabaseHelper {
         accrual_mode TEXT NOT NULL DEFAULT 'daily',
         allocation_rule TEXT NOT NULL DEFAULT 'interest_first',
         last_interest_date TEXT,
+        loan_start_date TEXT,
         is_archived INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL
       )
@@ -164,6 +180,7 @@ class DatabaseHelper {
         receipt_path TEXT,
         debit_account_name TEXT,
         credit_account_name TEXT,
+        linked_tx_id INTEGER,
         created_at TEXT NOT NULL,
         FOREIGN KEY (account_id) REFERENCES accounts (id) ON DELETE CASCADE,
         FOREIGN KEY (to_account_id) REFERENCES accounts (id) ON DELETE SET NULL
@@ -292,6 +309,25 @@ class DatabaseHelper {
         'accrual_mode': 'daily',
         'allocation_rule': 'interest_first',
         'last_interest_date': null,
+        'loan_start_date': null,
+        'is_archived': 0,
+        'created_at': now,
+      },
+      {
+        'name': 'Govt Account',
+        'type': 'custom',
+        'icon': 'account_balance',
+        'color': 0xFF37474F,
+        'balance': 0.0,
+        'principal_balance': 0.0,
+        'accrued_interest': 0.0,
+        'interest_rate': 0.0,
+        'interest_rate_type': 'per_month',
+        'is_compound': 0,
+        'accrual_mode': 'daily',
+        'allocation_rule': 'interest_first',
+        'last_interest_date': null,
+        'loan_start_date': null,
         'is_archived': 0,
         'created_at': now,
       },
@@ -578,11 +614,74 @@ class DatabaseHelper {
     }
   }
 
+  Future<void> _seedGovtAccountIfMissing(Database db) async {
+    final now = DateTime.now().toIso8601String();
+    final existing = await db.query('accounts', where: 'name = ?', whereArgs: ['Govt Account'], limit: 1);
+    if (existing.isEmpty) {
+      await db.insert('accounts', {
+        'name': 'Govt Account',
+        'type': 'custom',
+        'icon': 'account_balance',
+        'color': 0xFF37474F,
+        'balance': 0.0,
+        'principal_balance': 0.0,
+        'accrued_interest': 0.0,
+        'interest_rate': 0.0,
+        'interest_rate_type': 'per_month',
+        'is_compound': 0,
+        'accrual_mode': 'daily',
+        'allocation_rule': 'interest_first',
+        'last_interest_date': null,
+        'loan_start_date': null,
+        'is_archived': 0,
+        'created_at': now,
+      });
+    }
+  }
+
   // ==================== ACCOUNTS ====================
 
   Future<int> insertAccount(Account account) async {
     final db = await instance.database;
-    return await db.insert('accounts', account.toMap());
+    var accountToInsert = account;
+
+    // If debt or lending account has a historical loanStartDate with interest rate > 0,
+    // compute accrued interest till todate immediately upon creation
+    if (account.isInterestBearing && account.loanStartDate != null && account.interestRate > 0) {
+      final now = DateTime.now();
+      final days = now.difference(account.loanStartDate!).inDays;
+      if (days > 0) {
+        double accrued = 0.0;
+        if (account.accrualMode == 'daily') {
+          accrued = InterestCalculator.calculateAccruedInterest(
+            principal: account.principalBalance,
+            rate: account.interestRate,
+            rateType: account.interestRateType,
+            isCompound: account.isCompound,
+            fromDate: account.loanStartDate!,
+            toDate: now,
+          );
+        } else if (account.accrualMode == 'monthly') {
+          final months = days ~/ 30;
+          for (int i = 0; i < months; i++) {
+            final base = account.isCompound ? (account.principalBalance + accrued) : account.principalBalance;
+            accrued += InterestCalculator.calculateMonthlyInterestAmount(
+              principal: base,
+              rate: account.interestRate,
+              rateType: account.interestRateType,
+            );
+          }
+        }
+        if (accrued > 0) {
+          accountToInsert = account.copyWith(
+            accruedInterest: accrued,
+            lastInterestDate: now,
+          );
+        }
+      }
+    }
+
+    return await db.insert('accounts', accountToInsert.toMap());
   }
 
   Future<List<Account>> getAccounts({bool includeArchived = false}) async {
@@ -693,9 +792,15 @@ class DatabaseHelper {
 
       // 1. Insert transaction
       final txId = await txn.insert('transactions', txToInsert.toMap());
+      final insertedTx = txToInsert.copyWith(id: txId);
 
       // 2. Apply balance effects to accounts
-      await _applyTransactionEffect(txToInsert, txn, isReversal: false);
+      await _applyTransactionEffect(insertedTx, txn, isReversal: false);
+
+      // 3. Reflect in Pool Account if parent transaction
+      if (insertedTx.linkedTxId == null) {
+        await _reflectInPool(insertedTx, txn);
+      }
 
       return txId;
     });
@@ -711,6 +816,14 @@ class DatabaseHelper {
       if (oldTxMaps.isEmpty) return false;
       final oldTx = TransactionModel.fromMap(oldTxMaps.first);
 
+      // 1b. Revert and delete any previously linked pool reflections
+      final linkedTxMaps = await txn.query('transactions', where: 'linked_tx_id = ?', whereArgs: [newTx.id]);
+      for (final lMap in linkedTxMaps) {
+        final lTx = TransactionModel.fromMap(lMap);
+        await _applyTransactionEffect(lTx, txn, isReversal: true);
+        await txn.delete('transactions', where: 'id = ?', whereArgs: [lTx.id]);
+      }
+
       // 2. Revert previous effect from accounts
       await _applyTransactionEffect(oldTx, txn, isReversal: true);
 
@@ -724,6 +837,11 @@ class DatabaseHelper {
         where: 'id = ?',
         whereArgs: [newTx.id],
       );
+
+      // 4b. Re-reflect in Pool Account if parent transaction
+      if (newTx.linkedTxId == null) {
+        await _reflectInPool(newTx, txn);
+      }
 
       // 5. Insert edit history audit record
       final history = TransactionEditHistory(
@@ -748,6 +866,14 @@ class DatabaseHelper {
   Future<int> deleteTransaction(int id) async {
     final db = await instance.database;
     return await db.transaction((txn) async {
+      // 1. Revert and delete all linked transactions first (e.g. pool reflections)
+      final linkedTxMaps = await txn.query('transactions', where: 'linked_tx_id = ?', whereArgs: [id]);
+      for (final lMap in linkedTxMaps) {
+        final lTx = TransactionModel.fromMap(lMap);
+        await _applyTransactionEffect(lTx, txn, isReversal: true);
+        await txn.delete('transactions', where: 'id = ?', whereArgs: [lTx.id]);
+      }
+
       final txMaps = await txn.query('transactions', where: 'id = ?', whereArgs: [id]);
       if (txMaps.isNotEmpty) {
         final oldTx = TransactionModel.fromMap(txMaps.first);
@@ -761,6 +887,171 @@ class DatabaseHelper {
         whereArgs: [id],
       );
     });
+  }
+
+  Future<void> _reflectInPool(TransactionModel tx, DatabaseExecutor txn) async {
+    // 1. Find the designated Pool Account
+    final poolMaps = await txn.query('accounts', where: 'type = ?', whereArgs: ['pool'], limit: 1);
+    if (poolMaps.isEmpty) return;
+    final poolAccount = Account.fromMap(poolMaps.first);
+    final poolId = poolAccount.id!;
+
+    // 2. If the transaction was already created directly in the Pool account, do not duplicate
+    if (tx.accountId == poolId) return;
+
+    // 3. For transfers involving Pool account:
+    // Transfer logic already adjusts Pool balance in _applyTransactionEffect.
+    if (tx.type == TransactionType.transfer) {
+      if (tx.accountId == poolId || tx.toAccountId == poolId) {
+        return; // Already accounted for in pool balance
+      }
+      return; // Internal transfer between two non-pool accounts does not change net pool cash
+    }
+
+    // 4. Fetch Source Account
+    final srcMaps = await txn.query('accounts', where: 'id = ?', whereArgs: [tx.accountId]);
+    if (srcMaps.isEmpty) return;
+    final srcAccount = Account.fromMap(srcMaps.first);
+
+    // 5. Account-type specific reflection rules
+    if (srcAccount.type == AccountType.creditCard) {
+      // RULE: Credit Card Expenditure
+      // Reflected in Pool as a credit of the same amount (credit line drawn)
+      // and then a debit of the same towards the expenditure made. Net pool balance impact = 0.
+      if (tx.type == TransactionType.debit) {
+        // Entry A: Credit in Pool (Inflow from Credit Card)
+        final poolCredit = TransactionModel(
+          accountId: poolId,
+          type: TransactionType.credit,
+          amount: tx.amount,
+          category: tx.category,
+          note: 'Credit line drawn via ${srcAccount.name}${tx.note.isNotEmpty ? ": " + tx.note : ""}',
+          date: tx.date,
+          paymentMode: tx.paymentMode,
+          otherPaymentModeDetails: tx.otherPaymentModeDetails,
+          receiptPath: tx.receiptPath,
+          debitAccountName: srcAccount.name,
+          creditAccountName: poolAccount.name,
+          linkedTxId: tx.id,
+        );
+        final cId = await txn.insert('transactions', poolCredit.toMap());
+        await _applyTransactionEffect(poolCredit.copyWith(id: cId), txn, isReversal: false);
+
+        // Entry B: Debit in Pool (Outflow towards expense)
+        final poolDebit = TransactionModel(
+          accountId: poolId,
+          type: TransactionType.debit,
+          amount: tx.amount,
+          category: tx.category,
+          note: 'Spent via ${srcAccount.name}${tx.note.isNotEmpty ? ": " + tx.note : ""}',
+          date: tx.date,
+          paymentMode: tx.paymentMode,
+          otherPaymentModeDetails: tx.otherPaymentModeDetails,
+          receiptPath: tx.receiptPath,
+          debitAccountName: poolAccount.name,
+          creditAccountName: tx.creditAccountName ?? tx.category,
+          linkedTxId: tx.id,
+        );
+        final dId = await txn.insert('transactions', poolDebit.toMap());
+        await _applyTransactionEffect(poolDebit.copyWith(id: dId), txn, isReversal: false);
+      } else if (tx.type == TransactionType.credit) {
+        // Credit card bill payment / refund
+        final poolCredit = TransactionModel(
+          accountId: poolId,
+          type: TransactionType.credit,
+          amount: tx.amount,
+          category: tx.category,
+          note: 'Refund / Credit to ${srcAccount.name}${tx.note.isNotEmpty ? ": " + tx.note : ""}',
+          date: tx.date,
+          paymentMode: tx.paymentMode,
+          otherPaymentModeDetails: tx.otherPaymentModeDetails,
+          receiptPath: tx.receiptPath,
+          debitAccountName: tx.debitAccountName ?? srcAccount.name,
+          creditAccountName: poolAccount.name,
+          linkedTxId: tx.id,
+        );
+        final pId = await txn.insert('transactions', poolCredit.toMap());
+        await _applyTransactionEffect(poolCredit.copyWith(id: pId), txn, isReversal: false);
+      }
+    } else if (srcAccount.type == AccountType.salary) {
+      // RULE: Salary Account
+      // - Salary Credit: by default takes receipt from Govt Account, adds to Pool Account as credit (+).
+      // - Salary Debit: debited from Salary and debited from Pool Account (-).
+      //   No separate credit to Pool needed before debit since it was credited on receipt.
+      if (tx.type == TransactionType.credit) {
+        final poolSalaryCredit = TransactionModel(
+          accountId: poolId,
+          type: TransactionType.credit,
+          amount: tx.amount,
+          category: tx.category,
+          note: tx.note.isNotEmpty ? tx.note : 'Salary Received',
+          date: tx.date,
+          paymentMode: tx.paymentMode,
+          otherPaymentModeDetails: tx.otherPaymentModeDetails,
+          receiptPath: tx.receiptPath,
+          debitAccountName: tx.debitAccountName ?? 'Govt Account',
+          creditAccountName: poolAccount.name,
+          linkedTxId: tx.id,
+        );
+        final sId = await txn.insert('transactions', poolSalaryCredit.toMap());
+        await _applyTransactionEffect(poolSalaryCredit.copyWith(id: sId), txn, isReversal: false);
+      } else if (tx.type == TransactionType.debit) {
+        final poolSalaryDebit = TransactionModel(
+          accountId: poolId,
+          type: TransactionType.debit,
+          amount: tx.amount,
+          category: tx.category,
+          note: tx.note,
+          date: tx.date,
+          paymentMode: tx.paymentMode,
+          otherPaymentModeDetails: tx.otherPaymentModeDetails,
+          receiptPath: tx.receiptPath,
+          debitAccountName: poolAccount.name,
+          creditAccountName: tx.creditAccountName ?? tx.category,
+          linkedTxId: tx.id,
+        );
+        final sId = await txn.insert('transactions', poolSalaryDebit.toMap());
+        await _applyTransactionEffect(poolSalaryDebit.copyWith(id: sId), txn, isReversal: false);
+      }
+    } else {
+      // RULE: All other accounts (Bank, Chit, Debt, Lending, Demat, Insurance, Others, Custom)
+      // Pool reflects every transaction: Inflows add to Pool, Outflows subtract from Pool.
+      if (tx.type == TransactionType.credit) {
+        final poolEntry = TransactionModel(
+          accountId: poolId,
+          type: TransactionType.credit,
+          amount: tx.amount,
+          category: tx.category,
+          note: tx.note,
+          date: tx.date,
+          paymentMode: tx.paymentMode,
+          otherPaymentModeDetails: tx.otherPaymentModeDetails,
+          receiptPath: tx.receiptPath,
+          debitAccountName: tx.debitAccountName ?? srcAccount.name,
+          creditAccountName: poolAccount.name,
+          linkedTxId: tx.id,
+        );
+        final pId = await txn.insert('transactions', poolEntry.toMap());
+        await _applyTransactionEffect(poolEntry.copyWith(id: pId), txn, isReversal: false);
+      } else if (tx.type == TransactionType.debit) {
+        final poolEntry = TransactionModel(
+          accountId: poolId,
+          type: TransactionType.debit,
+          amount: tx.amount,
+          category: tx.category,
+          note: tx.note,
+          date: tx.date,
+          paymentMode: tx.paymentMode,
+          otherPaymentModeDetails: tx.otherPaymentModeDetails,
+          receiptPath: tx.receiptPath,
+          debitAccountName: poolAccount.name,
+          creditAccountName: tx.creditAccountName ?? srcAccount.name,
+          linkedTxId: tx.id,
+        );
+        final pId = await txn.insert('transactions', poolEntry.toMap());
+        await _applyTransactionEffect(poolEntry.copyWith(id: pId), txn, isReversal: false);
+      }
+    }
   }
 
   Future<void> _applyTransactionEffect(

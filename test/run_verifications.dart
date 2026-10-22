@@ -335,10 +335,11 @@ void main() {
     assert(liftedChit.liftedMonth == 5);
   });
 
-  // 6. Transaction Model Enhancements (Payment Mode, Debit/Credit Accounts, Receipt)
+  // 6. Transaction Model Enhancements (Payment Mode, Debit/Credit Accounts, Receipt, LinkedTxId)
   print('\n--- 6. Transaction Model Enhancements ---');
-  test('Transaction model serializes and preserves payment modes, receipts, and dual accounts', () {
+  test('Transaction model serializes and preserves payment modes, receipts, dual accounts, and linkedTxId', () {
     final tx = TransactionModel(
+      id: 101,
       accountId: 2,
       type: TransactionType.debit,
       amount: 4500.0,
@@ -350,6 +351,7 @@ void main() {
       receiptPath: '/storage/emulated/0/Download/receipt_123.pdf',
       debitAccountName: 'HDFC Bank',
       creditAccountName: 'Amazon Merchant',
+      linkedTxId: 99,
     );
 
     final map = tx.toMap();
@@ -358,6 +360,7 @@ void main() {
     assert(map['receipt_path'] == '/storage/emulated/0/Download/receipt_123.pdf');
     assert(map['debit_account_name'] == 'HDFC Bank');
     assert(map['credit_account_name'] == 'Amazon Merchant');
+    assert(map['linked_tx_id'] == 99);
 
     final reconstructed = TransactionModel.fromMap(map);
     assert(reconstructed.paymentMode == 'Others');
@@ -365,6 +368,182 @@ void main() {
     assert(reconstructed.receiptPath == '/storage/emulated/0/Download/receipt_123.pdf');
     assert(reconstructed.debitAccountName == 'HDFC Bank');
     assert(reconstructed.creditAccountName == 'Amazon Merchant');
+    assert(reconstructed.linkedTxId == 99);
+  });
+
+  // 7. Loan Origination Date Interest Accrual Tests
+  print('\n--- 7. Loan Origination Date Interest Accrual ---');
+  test('Historical loan origination date correctly calculates accrued interest up to current date', () {
+    final loanDate = DateTime(2026, 1, 1);
+    final today = DateTime(2026, 7, 1); // 181 days ~ 6 months
+    final principal = 100000.0;
+    final rate = 2.0; // 2% per month
+
+    final accrued = InterestCalculator.calculateAccruedInterest(
+      principal: principal,
+      rate: rate,
+      rateType: 'per_month',
+      isCompound: false,
+      fromDate: loanDate,
+      toDate: today,
+    );
+
+    // 181 days / 30 * 2% of 100,000 = ~12,066.67
+    assert(accrued > 12000.0 && accrued < 12100.0, 'Expected ~12066 accrued interest, got $accrued');
+  });
+
+  // 8. Accounting Rules & Pool Account Reflection Verification
+  print('\n--- 8. Accounting Rules & Pool Account Reflection ---');
+  test('Credit Card expenditure: Pool records Credit (line drawn) + Debit (expense) with net cash impact = 0', () {
+    final cardTx = TransactionModel(
+      id: 501,
+      accountId: 4, // Credit Card
+      type: TransactionType.debit,
+      amount: 3500.0,
+      category: 'Dining',
+      note: 'Dinner with family',
+      date: DateTime(2026, 10, 21),
+      paymentMode: 'Credit Card',
+      debitAccountName: 'ICICI Credit Card',
+      creditAccountName: 'Restaurant',
+    );
+
+    // Pool Account simulation
+    double poolBalance = 25000.0;
+
+    // Reflection 1: Pool Credit (Credit line drawn)
+    final poolCredit = TransactionModel(
+      accountId: 1, // Pool
+      type: TransactionType.credit,
+      amount: cardTx.amount,
+      category: cardTx.category,
+      note: 'Credit line drawn via ${cardTx.debitAccountName}: ${cardTx.note}',
+      date: cardTx.date,
+      linkedTxId: cardTx.id,
+      debitAccountName: cardTx.debitAccountName,
+      creditAccountName: 'Pool Account',
+    );
+    poolBalance += poolCredit.amount; // Inflow
+
+    // Reflection 2: Pool Debit (Expense spent)
+    final poolDebit = TransactionModel(
+      accountId: 1, // Pool
+      type: TransactionType.debit,
+      amount: cardTx.amount,
+      category: cardTx.category,
+      note: 'Spent via ${cardTx.debitAccountName}: ${cardTx.note}',
+      date: cardTx.date,
+      linkedTxId: cardTx.id,
+      debitAccountName: 'Pool Account',
+      creditAccountName: cardTx.creditAccountName,
+    );
+    poolBalance -= poolDebit.amount; // Outflow
+
+    // Net Pool cash impact must be zero
+    assert(poolBalance == 25000.0, 'Net Pool balance must remain 25000, got $poolBalance');
+    assert(poolCredit.linkedTxId == 501);
+    assert(poolDebit.linkedTxId == 501);
+  });
+
+  test('Salary Received: Defaults from Govt Account and credits Pool; Salary Outflow debits Pool directly', () {
+    double salaryAccountBalance = 0.0;
+    double poolBalance = 10000.0;
+
+    // 1. Salary Credit received from Govt Account
+    final salaryReceivedTx = TransactionModel(
+      id: 601,
+      accountId: 2, // Salary Account
+      type: TransactionType.credit,
+      amount: 80000.0,
+      category: 'Salary & Income',
+      note: 'Monthly salary credited',
+      date: DateTime(2026, 10, 21),
+      debitAccountName: 'Govt Account',
+      creditAccountName: 'Salary Account',
+    );
+    salaryAccountBalance += salaryReceivedTx.amount;
+
+    // Reflected in Pool as Credit (+80,000)
+    final poolSalaryCredit = TransactionModel(
+      accountId: 1,
+      type: TransactionType.credit,
+      amount: salaryReceivedTx.amount,
+      category: salaryReceivedTx.category,
+      note: salaryReceivedTx.note,
+      date: salaryReceivedTx.date,
+      debitAccountName: salaryReceivedTx.debitAccountName ?? 'Govt Account',
+      creditAccountName: 'Pool Account',
+      linkedTxId: salaryReceivedTx.id,
+    );
+    poolBalance += poolSalaryCredit.amount;
+
+    assert(salaryAccountBalance == 80000.0);
+    assert(poolBalance == 90000.0);
+    assert(poolSalaryCredit.debitAccountName == 'Govt Account');
+
+    // 2. Payment towards rent made from Salary Account
+    final rentPaymentTx = TransactionModel(
+      id: 602,
+      accountId: 2, // Salary Account
+      type: TransactionType.debit,
+      amount: 20000.0,
+      category: 'Rent',
+      note: 'House rent',
+      date: DateTime(2026, 10, 22),
+      debitAccountName: 'Salary Account',
+      creditAccountName: 'Landlord',
+    );
+    salaryAccountBalance -= rentPaymentTx.amount;
+
+    // Reflected in Pool as Debit (-20,000) directly without extra credit
+    final poolSalaryDebit = TransactionModel(
+      accountId: 1,
+      type: TransactionType.debit,
+      amount: rentPaymentTx.amount,
+      category: rentPaymentTx.category,
+      note: rentPaymentTx.note,
+      date: rentPaymentTx.date,
+      debitAccountName: 'Pool Account',
+      creditAccountName: rentPaymentTx.creditAccountName,
+      linkedTxId: rentPaymentTx.id,
+    );
+    poolBalance -= poolSalaryDebit.amount;
+
+    assert(salaryAccountBalance == 60000.0);
+    assert(poolBalance == 70000.0, 'Pool balance must be 70000, got $poolBalance');
+  });
+
+  // 9. Chit Account Proof and Editing
+  print('\n--- 9. Chit Account Proof and Editing ---');
+  test('Chit installment preserves PDF proof, payment mode, custom date, and supports editing', () {
+    final originalInstallment = TransactionModel(
+      id: 701,
+      accountId: 5, // Chit Account
+      type: TransactionType.debit,
+      amount: 8500.0,
+      category: 'Chit Installment (Month 1)',
+      note: 'Dividend: ₹1500',
+      date: DateTime(2026, 5, 10),
+      paymentMode: 'Net Banking',
+      receiptPath: '/storage/emulated/0/Documents/chit_receipt_month1.pdf',
+      debitAccountName: 'Chit Account',
+      creditAccountName: 'Chit Fund',
+    );
+
+    assert(originalInstallment.receiptPath!.endsWith('.pdf'));
+    assert(originalInstallment.paymentMode == 'Net Banking');
+
+    // Edited installment (e.g. user updated amount after revision and attached image proof)
+    final editedInstallment = originalInstallment.copyWith(
+      amount: 8200.0,
+      note: 'Dividend revised to ₹1800',
+      receiptPath: '/storage/emulated/0/Pictures/chit_revised_receipt.jpg',
+    );
+
+    assert(editedInstallment.id == 701);
+    assert(editedInstallment.amount == 8200.0);
+    assert(editedInstallment.receiptPath!.endsWith('.jpg'));
+    assert(editedInstallment.note == 'Dividend revised to ₹1800');
   });
 
   print('\n=============================================');

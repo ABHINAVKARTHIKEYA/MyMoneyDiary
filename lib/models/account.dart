@@ -316,6 +316,7 @@ class Account {
   final String accrualMode; // 'daily' or 'monthly'
   final String allocationRule; // 'interest_first' or 'principal_first'
   final DateTime? lastInterestDate;
+  final DateTime? loanStartDate;
   final bool isArchived;
   final DateTime createdAt;
 
@@ -334,6 +335,7 @@ class Account {
     this.accrualMode = 'daily',
     this.allocationRule = 'interest_first',
     this.lastInterestDate,
+    this.loanStartDate,
     this.isArchived = false,
     DateTime? createdAt,
   }) : createdAt = createdAt ?? DateTime.now();
@@ -358,6 +360,7 @@ class Account {
     String? accrualMode,
     String? allocationRule,
     DateTime? lastInterestDate,
+    DateTime? loanStartDate,
     bool? isArchived,
     DateTime? createdAt,
   }) {
@@ -376,6 +379,7 @@ class Account {
       accrualMode: accrualMode ?? this.accrualMode,
       allocationRule: allocationRule ?? this.allocationRule,
       lastInterestDate: lastInterestDate ?? this.lastInterestDate,
+      loanStartDate: loanStartDate ?? this.loanStartDate,
       isArchived: isArchived ?? this.isArchived,
       createdAt: createdAt ?? this.createdAt,
     );
@@ -397,6 +401,7 @@ class Account {
       'accrual_mode': accrualMode,
       'allocation_rule': allocationRule,
       'last_interest_date': lastInterestDate?.toIso8601String(),
+      'loan_start_date': loanStartDate?.toIso8601String(),
       'is_archived': isArchived ? 1 : 0,
       'created_at': createdAt.toIso8601String(),
     };
@@ -419,6 +424,9 @@ class Account {
       allocationRule: map['allocation_rule'] as String? ?? 'interest_first',
       lastInterestDate: map['last_interest_date'] != null
           ? DateTime.tryParse(map['last_interest_date'] as String)
+          : null,
+      loanStartDate: map['loan_start_date'] != null
+          ? DateTime.tryParse(map['loan_start_date'] as String)
           : null,
       isArchived: (map['is_archived'] as int?) == 1,
       createdAt: map['created_at'] != null

@@ -28,6 +28,7 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
   bool _isCompound = false;
   String _accrualMode = 'daily'; // 'daily' or 'monthly'
   String _allocationRule = 'interest_first'; // 'interest_first' or 'principal_first'
+  DateTime _loanDate = DateTime.now();
 
   // Chit Fund fields
   final TextEditingController _chitTotalValueController =
@@ -210,6 +211,32 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
                           color: AppTheme.emeraldDark,
                           fontSize: 15,
                         ),
+                      ),
+                      const SizedBox(height: 12),
+
+                      // Date of Taking / Lending Loan
+                      OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          alignment: Alignment.centerLeft,
+                        ),
+                        icon: const Icon(Icons.calendar_month, color: AppTheme.emeraldPrimary, size: 20),
+                        label: Text(
+                          '${_selectedType == AccountType.debt ? "Date of Taking Loan" : "Date of Lending Loan"}: ${dateFormat.format(_loanDate)}',
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppTheme.emeraldDark),
+                        ),
+                        onPressed: () async {
+                          final picked = await showDatePicker(
+                            context: context,
+                            initialDate: _loanDate,
+                            firstDate: DateTime(1990),
+                            lastDate: DateTime.now(),
+                          );
+                          if (picked != null) {
+                            setState(() => _loanDate = picked);
+                          }
+                        },
                       ),
                       const SizedBox(height: 12),
 
@@ -606,7 +633,8 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
       isCompound: _isCompound,
       accrualMode: _accrualMode,
       allocationRule: _allocationRule,
-      lastInterestDate: isDebtOrLending ? DateTime.now() : null,
+      loanStartDate: isDebtOrLending ? _loanDate : null,
+      lastInterestDate: isDebtOrLending ? _loanDate : null,
     );
 
     ChitDetails? chitDetails;

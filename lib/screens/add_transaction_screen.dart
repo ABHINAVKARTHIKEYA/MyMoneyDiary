@@ -35,6 +35,7 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
   final TextEditingController _categoryController = TextEditingController(text: 'General');
   final TextEditingController _noteController = TextEditingController();
   final TextEditingController _otherModeController = TextEditingController();
+  final TextEditingController _counterpartyController = TextEditingController();
 
   // Debt/Lending repayment split controllers
   final TextEditingController _principalPortionController = TextEditingController();
@@ -74,12 +75,22 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
       if (_paymentMode == 'Others') {
         _otherModeController.text = tx.otherPaymentModeDetails ?? '';
       }
+      if (tx.type == TransactionType.credit) {
+        _counterpartyController.text = tx.debitAccountName ?? '';
+      } else if (tx.type == TransactionType.debit) {
+        _counterpartyController.text = tx.creditAccountName ?? '';
+      }
       _receiptPath = tx.receiptPath;
       if (tx.principalPortion > 0) {
         _principalPortionController.text = tx.principalPortion.toStringAsFixed(2);
       }
       if (tx.interestPortion > 0) {
         _interestPortionController.text = tx.interestPortion.toStringAsFixed(2);
+      }
+    } else {
+      if (_selectedAccount?.type == AccountType.salary && _type == TransactionType.credit) {
+        _counterpartyController.text = 'Govt Account';
+        _categoryController.text = 'Salary & Income';
       }
     }
 
@@ -93,6 +104,7 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
     _categoryController.dispose();
     _noteController.dispose();
     _otherModeController.dispose();
+    _counterpartyController.dispose();
     _principalPortionController.dispose();
     _interestPortionController.dispose();
     super.dispose();
@@ -199,6 +211,14 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                           setState(() {
                             _isTransferMode = false;
                             _type = TransactionType.credit;
+                            if (_selectedAccount?.type == AccountType.salary) {
+                              if (_counterpartyController.text.isEmpty) {
+                                _counterpartyController.text = 'Govt Account';
+                              }
+                              if (_categoryController.text == 'General' || _categoryController.text.isEmpty) {
+                                _categoryController.text = 'Salary & Income';
+                              }
+                            }
                             _recalculateSplit();
                           });
                         },
@@ -311,9 +331,38 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                   onChanged: (val) {
                     setState(() {
                       _selectedAccount = val;
+                      if (val?.type == AccountType.salary && _type == TransactionType.credit) {
+                        if (_counterpartyController.text.isEmpty || _counterpartyController.text == 'Govt Account') {
+                          _counterpartyController.text = 'Govt Account';
+                        }
+                        if (_categoryController.text == 'General' || _categoryController.text.isEmpty) {
+                          _categoryController.text = 'Salary & Income';
+                        }
+                      }
                       _recalculateSplit();
                     });
                   },
+                ),
+                const SizedBox(height: 14),
+                Text(
+                  _type == TransactionType.debit
+                      ? 'Paid To / Beneficiary (Credit Account / Party)'
+                      : 'Received From / Source (Debit Account / Payer)',
+                  style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                ),
+                const SizedBox(height: 6),
+                TextFormField(
+                  controller: _counterpartyController,
+                  decoration: InputDecoration(
+                    hintText: _type == TransactionType.debit
+                        ? 'e.g., Vendor, Store, Merchant'
+                        : (_selectedAccount?.type == AccountType.salary ? 'Govt Account' : 'e.g., Govt Account, Employer, Client'),
+                    prefixIcon: Icon(
+                      _type == TransactionType.debit ? Icons.store : Icons.account_balance,
+                      color: AppTheme.emeraldPrimary,
+                    ),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
                 ),
               ] else ...[
                 // Transfer: From (Debit) -> To (Credit)
@@ -678,10 +727,16 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
       receiptPath: _receiptPath,
       debitAccountName: _isTransferMode
           ? _selectedAccount!.name
-          : (_type == TransactionType.debit ? _selectedAccount!.name : null),
+          : (_type == TransactionType.debit
+              ? _selectedAccount!.name
+              : (_counterpartyController.text.trim().isNotEmpty
+                  ? _counterpartyController.text.trim()
+                  : (_selectedAccount?.type == AccountType.salary ? 'Govt Account' : 'External Payer'))),
       creditAccountName: _isTransferMode
           ? _destinationAccount?.name
-          : (_type == TransactionType.credit ? _selectedAccount!.name : null),
+          : (_type == TransactionType.credit
+              ? _selectedAccount!.name
+              : (_counterpartyController.text.trim().isNotEmpty ? _counterpartyController.text.trim() : 'Expenditure')),
     );
 
     await context.read<FinanceProvider>().addTransaction(tx);
@@ -775,10 +830,16 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
       receiptPath: _receiptPath,
       debitAccountName: _isTransferMode
           ? _selectedAccount!.name
-          : (_type == TransactionType.debit ? _selectedAccount!.name : null),
+          : (_type == TransactionType.debit
+              ? _selectedAccount!.name
+              : (_counterpartyController.text.trim().isNotEmpty
+                  ? _counterpartyController.text.trim()
+                  : (_selectedAccount?.type == AccountType.salary ? 'Govt Account' : 'External Payer'))),
       creditAccountName: _isTransferMode
           ? _destinationAccount?.name
-          : (_type == TransactionType.credit ? _selectedAccount!.name : null),
+          : (_type == TransactionType.credit
+              ? _selectedAccount!.name
+              : (_counterpartyController.text.trim().isNotEmpty ? _counterpartyController.text.trim() : 'Expenditure')),
     );
 
     final success = await context.read<FinanceProvider>().updateTransaction(updatedTx, reason: reason);
