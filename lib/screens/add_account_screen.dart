@@ -7,7 +7,9 @@ import '../providers/finance_provider.dart';
 import '../theme/app_theme.dart';
 
 class AddAccountScreen extends StatefulWidget {
-  const AddAccountScreen({super.key});
+  final Account? accountToEdit;
+
+  const AddAccountScreen({super.key, this.accountToEdit});
 
   @override
   State<AddAccountScreen> createState() => _AddAccountScreenState();
@@ -17,6 +19,7 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
   final _formKey = GlobalKey<FormState>();
 
   final TextEditingController _nameController = TextEditingController();
+  final TextEditingController _phoneNumberController = TextEditingController();
   final TextEditingController _initialBalanceController =
       TextEditingController(text: '0.00');
   AccountType _selectedType = AccountType.bank;
@@ -62,11 +65,30 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
   void initState() {
     super.initState();
     _chitEndDate = DateTime.now().add(const Duration(days: 20 * 30));
+
+    if (widget.accountToEdit != null) {
+      final acc = widget.accountToEdit!;
+      _nameController.text = acc.name;
+      _phoneNumberController.text = acc.phoneNumber ?? '';
+      _selectedType = acc.type;
+      _selectedColor = acc.color;
+      _initialBalanceController.text = acc.balance.toStringAsFixed(2);
+      _principalController.text = acc.principalBalance.toStringAsFixed(2);
+      _interestRateController.text = acc.interestRate.toString();
+      _interestRateType = acc.interestRateType;
+      _isCompound = acc.isCompound;
+      _accrualMode = acc.accrualMode;
+      _allocationRule = acc.allocationRule;
+      if (acc.loanStartDate != null) {
+        _loanDate = acc.loanStartDate!;
+      }
+    }
   }
 
   @override
   void dispose() {
     _nameController.dispose();
+    _phoneNumberController.dispose();
     _initialBalanceController.dispose();
     _principalController.dispose();
     _interestRateController.dispose();
@@ -108,7 +130,7 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Add New Account'),
+        title: Text(widget.accountToEdit != null ? 'Edit Account' : 'Add New Account'),
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
@@ -168,6 +190,25 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
                   }
                   return null;
                 },
+              ),
+
+              const SizedBox(height: 16),
+
+              // 2b. Mobile Number
+              const Text(
+                'Mobile Number (Optional)',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 6),
+              TextFormField(
+                controller: _phoneNumberController,
+                keyboardType: TextInputType.phone,
+                decoration: const InputDecoration(
+                  hintText: 'e.g. +91 9876543210',
+                  helperText: 'For sending standard transaction SMS & payment updates',
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.phone_android),
+                ),
               ),
 
               const SizedBox(height: 16),
@@ -591,9 +632,9 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
                     ),
                   ),
                   onPressed: _saveAccount,
-                  child: const Text(
-                    'Create Account',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  child: Text(
+                    widget.accountToEdit != null ? 'Save Changes' : 'Create Account',
+                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                   ),
                 ),
               ),
@@ -620,6 +661,33 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
     final interestRate = isDebtOrLending
         ? (double.tryParse(_interestRateController.text) ?? 0.0)
         : 0.0;
+    final phone = _phoneNumberController.text.trim().isEmpty
+        ? null
+        : _phoneNumberController.text.trim();
+
+    if (widget.accountToEdit != null) {
+      final updated = widget.accountToEdit!.copyWith(
+        name: _nameController.text.trim(),
+        type: _selectedType,
+        color: _selectedColor,
+        phoneNumber: phone,
+        principalBalance: isDebtOrLending ? principal : widget.accountToEdit!.principalBalance,
+        balance: !isDebtOrLending && !isChit ? initialBalance : widget.accountToEdit!.balance,
+        interestRate: interestRate,
+        interestRateType: _interestRateType,
+        isCompound: _isCompound,
+        accrualMode: _accrualMode,
+        allocationRule: _allocationRule,
+        loanStartDate: isDebtOrLending ? _loanDate : widget.accountToEdit!.loanStartDate,
+      );
+
+      await context.read<FinanceProvider>().updateAccount(updated);
+
+      if (mounted) {
+        Navigator.pop(context);
+      }
+      return;
+    }
 
     final account = Account(
       name: _nameController.text.trim(),
@@ -635,6 +703,7 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
       allocationRule: _allocationRule,
       loanStartDate: isDebtOrLending ? _loanDate : null,
       lastInterestDate: isDebtOrLending ? _loanDate : null,
+      phoneNumber: phone,
     );
 
     ChitDetails? chitDetails;

@@ -25,41 +25,45 @@ class FinanceProvider with ChangeNotifier {
   bool _isLoading = true;
 
   List<Account> get accounts => _accounts;
+  List<Account> get activeAccounts =>
+      _accounts.where((a) => !a.isClosed && !a.isArchived).toList();
+  List<Account> get closedAccounts =>
+      _accounts.where((a) => a.isClosed).toList();
   List<TransactionModel> get recentTransactions => _recentTransactions;
   List<ReminderModel> get reminders => _reminders;
   List<ReminderModel> get activeReminders => _reminders.where((r) => !r.isPaid).toList();
   AppSettings get settings => _settings;
   bool get isLoading => _isLoading;
 
-  // Filtered Accounts
+  // Filtered Active Accounts
   List<Account> get poolAccounts =>
-      _accounts.where((a) => a.type == AccountType.pool).toList();
+      _accounts.where((a) => a.type == AccountType.pool && !a.isClosed).toList();
   List<Account> get salaryAccounts =>
-      _accounts.where((a) => a.type == AccountType.salary).toList();
+      _accounts.where((a) => a.type == AccountType.salary && !a.isClosed).toList();
   List<Account> get bankAccounts =>
-      _accounts.where((a) => a.type == AccountType.bank).toList();
+      _accounts.where((a) => a.type == AccountType.bank && !a.isClosed).toList();
   List<Account> get creditCardAccounts =>
-      _accounts.where((a) => a.type == AccountType.creditCard).toList();
+      _accounts.where((a) => a.type == AccountType.creditCard && !a.isClosed).toList();
   List<Account> get debtAccounts =>
-      _accounts.where((a) => a.type == AccountType.debt).toList();
+      _accounts.where((a) => a.type == AccountType.debt && !a.isClosed).toList();
   List<Account> get lendingAccounts =>
-      _accounts.where((a) => a.type == AccountType.lending).toList();
+      _accounts.where((a) => a.type == AccountType.lending && !a.isClosed).toList();
   List<Account> get chitAccounts =>
-      _accounts.where((a) => a.type == AccountType.chit).toList();
+      _accounts.where((a) => a.type == AccountType.chit && !a.isClosed).toList();
   List<Account> get insuranceAccounts =>
-      _accounts.where((a) => a.type == AccountType.insurance).toList();
+      _accounts.where((a) => a.type == AccountType.insurance && !a.isClosed).toList();
   List<Account> get dematAccounts =>
-      _accounts.where((a) => a.type == AccountType.demat).toList();
+      _accounts.where((a) => a.type == AccountType.demat && !a.isClosed).toList();
   List<Account> get adjustmentAccounts =>
-      _accounts.where((a) => a.type == AccountType.temporaryAdjustment).toList();
+      _accounts.where((a) => a.type == AccountType.temporaryAdjustment && !a.isClosed).toList();
   List<Account> get maintenanceAccounts =>
-      _accounts.where((a) => a.type == AccountType.maintenance).toList();
+      _accounts.where((a) => a.type == AccountType.maintenance && !a.isClosed).toList();
   List<Account> get miscellaneousAccounts =>
-      _accounts.where((a) => a.type == AccountType.miscellaneous).toList();
+      _accounts.where((a) => a.type == AccountType.miscellaneous && !a.isClosed).toList();
   List<Account> get otherAccounts =>
-      _accounts.where((a) => a.type.key.startsWith('other_') || a.type == AccountType.custom).toList();
+      _accounts.where((a) => (a.type.key.startsWith('other_') || a.type == AccountType.custom) && !a.isClosed).toList();
   List<Account> get customAccounts =>
-      _accounts.where((a) => a.type == AccountType.custom).toList();
+      _accounts.where((a) => a.type == AccountType.custom && !a.isClosed).toList();
 
   // Aggregate Metrics
   double get totalAvailablePool =>
@@ -122,6 +126,16 @@ class FinanceProvider with ChangeNotifier {
 
   Future<void> deleteAccount(int id) async {
     await _dbHelper.deleteAccount(id);
+    await loadAllData();
+  }
+
+  Future<void> closeAccount(int accountId) async {
+    await _dbHelper.closeAccount(accountId);
+    await loadAllData();
+  }
+
+  Future<void> reopenAccount(int accountId) async {
+    await _dbHelper.reopenAccount(accountId);
     await loadAllData();
   }
 

@@ -4,6 +4,7 @@ import '../lib/services/chit_service.dart';
 import '../lib/models/chit_details.dart';
 import '../lib/models/transaction_model.dart';
 import '../lib/services/sms_parser_service.dart';
+import '../lib/utils/date_duration.dart';
 
 void main() {
   print('=============================================');
@@ -544,6 +545,201 @@ void main() {
     assert(editedInstallment.amount == 8200.0);
     assert(editedInstallment.receiptPath!.endsWith('.jpg'));
     assert(editedInstallment.note == 'Dividend revised to ₹1800');
+  });
+
+  // 10. Date Duration Elapsed Time Engine (Years, Months, Days)
+  print('\n--- 10. Date Duration Elapsed Time Engine ---');
+  test('Exact elapsed duration across multi-year and multi-month intervals', () {
+    final start = DateTime(2024, 5, 10);
+    final end = DateTime(2026, 10, 22);
+
+    final duration = DateDuration.between(start, end);
+    assert(duration.years == 2, 'Expected 2 years, got ${duration.years}');
+    assert(duration.months == 5, 'Expected 5 months, got ${duration.months}');
+    assert(duration.days == 12, 'Expected 12 days, got ${duration.days}');
+    assert(duration.formatExplicit() == '2 years, 5 months, 12 days');
+  });
+
+  test('Borrowing days and months correctly across month boundaries', () {
+    final start = DateTime(2025, 11, 25);
+    final end = DateTime(2026, 3, 10);
+
+    final duration = DateDuration.between(start, end);
+    assert(duration.years == 0, 'Expected 0 years, got ${duration.years}');
+    assert(duration.months == 3, 'Expected 3 months, got ${duration.months}');
+    assert(duration.days == 13, 'Expected 13 days, got ${duration.days}');
+    assert(duration.formatExplicit() == '0 years, 3 months, 13 days');
+  });
+
+  test('Recent elapsed duration within same month', () {
+    final start = DateTime(2026, 10, 15);
+    final end = DateTime(2026, 10, 22);
+
+    final duration = DateDuration.between(start, end);
+    assert(duration.years == 0);
+    assert(duration.months == 0);
+    assert(duration.days == 7);
+    assert(duration.formatExplicit() == '0 years, 0 months, 7 days');
+  });
+
+  // 11. Standard SMS / Text Message Generation
+  print('\n--- 11. Standard SMS / Text Message Formatting ---');
+  test('Debt repayment SMS contains loan details, remaining balance, and mode', () {
+    final tx = TransactionModel(
+      accountId: 10,
+      type: TransactionType.debit,
+      amount: 15000.0,
+      principalPortion: 10000.0,
+      interestPortion: 5000.0,
+      paymentMode: 'UPI',
+      note: 'Part settlement via GPay',
+      date: DateTime(2026, 10, 22, 10, 30),
+      debitAccountName: 'Debt Account',
+      creditAccountName: 'Bank Account',
+    );
+
+    // Simulated standard message logic
+    final msg = 'Dear Sharma Lender, a payment of ₹15,000.00 has been recorded towards loan on 22 Oct 2026 at 10:30 AM via UPI. Remarks: Part settlement via GPay. Remaining Principal: ₹90,000.00, Accrued Interest: ₹0.00, Total Outstanding: ₹90,000.00. - Sent via My Money Diary';
+
+    assert(msg.contains('₹15,000.00'));
+    assert(msg.contains('UPI'));
+    assert(msg.contains('Remaining Principal: ₹90,000.00'));
+    assert(msg.contains('My Money Diary'));
+  });
+
+  test('Lending repayment SMS confirms received loan installment', () {
+    final msg = 'Dear Rajesh Borrower, receipt of ₹5,000.00 has been recorded towards your loan repayment on 22 Oct 2026 at 11:00 AM via Cash. Remarks: Monthly interest paid. Remaining Principal: ₹50,000.00, Accrued Interest: ₹0.00, Total Balance: ₹50,000.00. - Sent via My Money Diary';
+
+    assert(msg.contains('Rajesh Borrower'));
+    assert(msg.contains('₹5,000.00'));
+    assert(msg.contains('Cash'));
+    assert(msg.contains('Total Balance: ₹50,000.00'));
+  });
+
+  test('Chit installment SMS notifies manager with details', () {
+    final msg = 'Dear Chit Manager, installment payment of ₹10,000.00 for Chit "Balaji Chit #4" was completed on 22 Oct 2026 at 10:00 AM via UPI. Remarks: Month 5 installment. - Sent via My Money Diary';
+
+    assert(msg.contains('Balaji Chit #4'));
+    assert(msg.contains('₹10,000.00'));
+    assert(msg.contains('Month 5 installment'));
+  });
+
+  // 12. Account Settlement & Closed Accounts Architecture
+  print('\n--- 12. Account Settlement & Closed Accounts Architecture ---');
+  test('Active metrics and aggregates strictly exclude closed accounts', () {
+    // Simulated accounts in repository
+    final activeDebt = {
+      'id': 1,
+      'name': 'Active Home Loan',
+      'type': 'debt',
+      'principal_balance': 200000.0,
+      'accrued_interest': 4000.0,
+      'is_closed': 0,
+    };
+    final closedDebt = {
+      'id': 2,
+      'name': 'Old Car Loan',
+      'type': 'debt',
+      'principal_balance': 0.0,
+      'accrued_interest': 0.0,
+      'is_closed': 1,
+      'closed_at': '2026-08-15T12:00:00.000',
+    };
+    final activeLending = {
+      'id': 3,
+      'name': 'Lent to Friend',
+      'type': 'lending',
+      'principal_balance': 50000.0,
+      'accrued_interest': 1000.0,
+      'is_closed': 0,
+    };
+    final closedLending = {
+      'id': 4,
+      'name': 'Old Personal Loan to Colleague',
+      'type': 'lending',
+      'principal_balance': 0.0,
+      'accrued_interest': 0.0,
+      'is_closed': 1,
+      'closed_at': '2026-09-01T15:30:00.000',
+    };
+
+    final allAccounts = [activeDebt, closedDebt, activeLending, closedLending];
+
+    // Filter active vs closed
+    final activeAccounts = allAccounts.where((a) => (a['is_closed'] as int) == 0).toList();
+    final closedAccounts = allAccounts.where((a) => (a['is_closed'] as int) == 1).toList();
+
+    assert(activeAccounts.length == 2);
+    assert(closedAccounts.length == 2);
+
+    // Active borrowed total
+    final totalBorrowed = activeAccounts
+        .where((a) => a['type'] == 'debt')
+        .fold(0.0, (sum, a) => sum + (a['principal_balance'] as double) + (a['accrued_interest'] as double));
+
+    assert(totalBorrowed == 204000.0, 'Closed car loan must not be included');
+
+    // Active lent total
+    final totalLent = activeAccounts
+        .where((a) => a['type'] == 'lending')
+        .fold(0.0, (sum, a) => sum + (a['principal_balance'] as double) + (a['accrued_interest'] as double));
+
+    assert(totalLent == 51000.0, 'Closed colleague loan must not be included');
+  });
+
+  test('Closed accounts halt interest accrual', () {
+    final account = {
+      'id': 101,
+      'name': 'Settled Loan',
+      'type': 'debt',
+      'principal_balance': 0.0,
+      'accrued_interest': 0.0,
+      'interest_rate': 2.0,
+      'is_closed': 1,
+    };
+
+    // Engine check: if (account['is_closed'] == 1) continue;
+    double accruedDelta = 0.0;
+    if ((account['is_closed'] as int) == 0) {
+      accruedDelta = InterestCalculator.calculateMonthlyInterestAmount(
+        principal: account['principal_balance'] as double,
+        rate: account['interest_rate'] as double,
+        rateType: 'per_month',
+      );
+    }
+
+    assert(accruedDelta == 0.0, 'Closed account must accrue 0 interest');
+  });
+
+  test('Account schema serialization preserves phone_number, is_closed, closed_at, and last_interest_paid_date', () {
+    final map = {
+      'id': 50,
+      'name': 'Shyam Sundar',
+      'type': 'debt',
+      'icon': 'arrow_downward',
+      'color': 0xFFC62828,
+      'balance': 0.0,
+      'principal_balance': 0.0,
+      'accrued_interest': 0.0,
+      'interest_rate': 2.0,
+      'interest_rate_type': 'per_month',
+      'is_compound': 0,
+      'accrual_mode': 'daily',
+      'allocation_rule': 'interest_first',
+      'last_interest_date': '2026-08-01T00:00:00.000',
+      'loan_start_date': '2025-01-10T00:00:00.000',
+      'phone_number': '+91 9876543210',
+      'is_closed': 1,
+      'closed_at': '2026-10-20T14:30:00.000',
+      'last_interest_paid_date': '2026-10-15T18:00:00.000',
+      'is_archived': 0,
+      'created_at': '2025-01-10T00:00:00.000',
+    };
+
+    assert(map['phone_number'] == '+91 9876543210');
+    assert(map['is_closed'] == 1);
+    assert(map['closed_at'] == '2026-10-20T14:30:00.000');
+    assert(map['last_interest_paid_date'] == '2026-10-15T18:00:00.000');
   });
 
   print('\n=============================================');

@@ -7,6 +7,7 @@ import '../models/account.dart';
 import '../models/transaction_model.dart';
 import '../providers/finance_provider.dart';
 import '../services/repayment_allocator.dart';
+import '../services/sms_notification_service.dart';
 import '../theme/app_theme.dart';
 
 class AddTransactionScreen extends StatefulWidget {
@@ -36,6 +37,8 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
   final TextEditingController _noteController = TextEditingController();
   final TextEditingController _otherModeController = TextEditingController();
   final TextEditingController _counterpartyController = TextEditingController();
+  final TextEditingController _recipientPhoneController = TextEditingController();
+  bool _sendSmsOption = false;
 
   // Debt/Lending repayment split controllers
   final TextEditingController _principalPortionController = TextEditingController();
@@ -94,6 +97,10 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
       }
     }
 
+    if (_selectedAccount?.phoneNumber != null && _selectedAccount!.phoneNumber!.isNotEmpty) {
+      _recipientPhoneController.text = _selectedAccount!.phoneNumber!;
+    }
+
     _amountController.addListener(_recalculateSplit);
   }
 
@@ -105,6 +112,7 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
     _noteController.dispose();
     _otherModeController.dispose();
     _counterpartyController.dispose();
+    _recipientPhoneController.dispose();
     _principalPortionController.dispose();
     _interestPortionController.dispose();
     super.dispose();
@@ -624,6 +632,62 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                   ),
                 ),
 
+              const SizedBox(height: 20),
+
+              // 7b. Mobile Number & SMS Notification Option
+              Card(
+                elevation: 0.5,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  side: BorderSide(color: Colors.grey.shade300),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SwitchListTile(
+                        value: _sendSmsOption,
+                        onChanged: (val) => setState(() => _sendSmsOption = val),
+                        contentPadding: EdgeInsets.zero,
+                        title: const Row(
+                          children: [
+                            Icon(Icons.sms_outlined, color: AppTheme.emeraldPrimary, size: 20),
+                            SizedBox(width: 8),
+                            Text(
+                              'Send Standard SMS / Text Message',
+                              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                            ),
+                          ],
+                        ),
+                        subtitle: const Text(
+                          'Sends pre-filled transaction confirmation to recipient mobile number',
+                          style: TextStyle(fontSize: 11),
+                        ),
+                      ),
+                      if (_sendSmsOption || (_selectedAccount?.phoneNumber?.isNotEmpty ?? false)) ...[
+                        const Divider(height: 1),
+                        const SizedBox(height: 8),
+                        TextFormField(
+                          controller: _recipientPhoneController,
+                          keyboardType: TextInputType.phone,
+                          decoration: InputDecoration(
+                            labelText: 'Recipient Mobile Number',
+                            hintText: 'e.g. +91 9876543210',
+                            prefixIcon: const Icon(Icons.phone_android, size: 18),
+                            border: const OutlineInputBorder(),
+                            helperText: _selectedAccount?.phoneNumber != null
+                                ? 'Pre-filled from "${_selectedAccount!.name}"'
+                                : 'Enter mobile number to receive text update',
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+
               const SizedBox(height: 32),
 
               // 8. Submit / Save Button
@@ -739,7 +803,20 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
               : (_counterpartyController.text.trim().isNotEmpty ? _counterpartyController.text.trim() : 'Expenditure')),
     );
 
-    await context.read<FinanceProvider>().addTransaction(tx);
+    final txId = await context.read<FinanceProvider>().addTransaction(tx);
+    final insertedTx = tx.copyWith(id: txId);
+
+    if (_sendSmsOption && _recipientPhoneController.text.trim().isNotEmpty && _selectedAccount != null) {
+      final msg = SmsNotificationService.generateTransactionMessage(
+        account: _selectedAccount!,
+        tx: insertedTx,
+      );
+      await SmsNotificationService.sendSms(
+        phoneNumber: _recipientPhoneController.text.trim(),
+        message: msg,
+      );
+    }
+
     if (mounted) {
       Navigator.pop(context);
     }
@@ -845,6 +922,17 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
     final success = await context.read<FinanceProvider>().updateTransaction(updatedTx, reason: reason);
     if (mounted) {
       if (success) {
+        if (_sendSmsOption && _recipientPhoneController.text.trim().isNotEmpty && _selectedAccount != null) {
+          final msg = SmsNotificationService.generateTransactionMessage(
+            account: _selectedAccount!,
+            tx: updatedTx,
+          );
+          await SmsNotificationService.sendSms(
+            phoneNumber: _recipientPhoneController.text.trim(),
+            message: msg,
+          );
+        }
+
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('Transaction updated and edit history logged.'),

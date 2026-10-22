@@ -8,8 +8,11 @@ import '../models/transaction_model.dart';
 import '../models/transaction_edit_history.dart';
 import '../providers/finance_provider.dart';
 import '../services/statement_exporter_service.dart';
+import '../services/sms_notification_service.dart';
+import '../utils/date_duration.dart';
 import '../theme/app_theme.dart';
 import 'add_transaction_screen.dart';
+import 'add_account_screen.dart';
 
 class AccountDetailScreen extends StatefulWidget {
   final Account account;
@@ -39,17 +42,72 @@ class _AccountDetailScreenState extends State<AccountDetailScreen> {
       appBar: AppBar(
         title: Text(currentAccount.name),
         actions: [
-          // Rename Account button
+          // Edit Account Details button
           IconButton(
             icon: const Icon(Icons.edit_outlined),
-            tooltip: 'Rename Account',
-            onPressed: () => _showRenameAccountDialog(context, currentAccount),
+            tooltip: 'Edit Account',
+            onPressed: () async {
+              await Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => AddAccountScreen(accountToEdit: currentAccount),
+                ),
+              );
+              setState(() {});
+            },
           ),
           // Export Statement button
           IconButton(
             icon: const Icon(Icons.file_download_outlined),
             tooltip: 'Export Statement (Excel & PDF)',
             onPressed: () => _showExportStatementDialog(context, currentAccount),
+          ),
+          // More Account Options (Close/Reopen/Rename)
+          PopupMenuButton<String>(
+            tooltip: 'Account Options',
+            onSelected: (val) {
+              if (val == 'close') {
+                _confirmCloseAccount(context, currentAccount);
+              } else if (val == 'reopen') {
+                _confirmReopenAccount(context, currentAccount);
+              } else if (val == 'rename') {
+                _showRenameAccountDialog(context, currentAccount);
+              }
+            },
+            itemBuilder: (ctx) => [
+              const PopupMenuItem(
+                value: 'rename',
+                child: Row(
+                  children: [
+                    Icon(Icons.drive_file_rename_outline, size: 18),
+                    SizedBox(width: 8),
+                    Text('Rename Account'),
+                  ],
+                ),
+              ),
+              if (currentAccount.isClosed)
+                const PopupMenuItem(
+                  value: 'reopen',
+                  child: Row(
+                    children: [
+                      Icon(Icons.unarchive_outlined, size: 18, color: AppTheme.emeraldPrimary),
+                      SizedBox(width: 8),
+                      Text('Reopen Account'),
+                    ],
+                  ),
+                )
+              else
+                const PopupMenuItem(
+                  value: 'close',
+                  child: Row(
+                    children: [
+                      Icon(Icons.archive_outlined, size: 18, color: AppTheme.amberGold),
+                      SizedBox(width: 8),
+                      Text('Close Account (Archive)'),
+                    ],
+                  ),
+                ),
+            ],
           ),
           // Delete Account button
           IconButton(
@@ -336,12 +394,28 @@ class _AccountDetailScreenState extends State<AccountDetailScreen> {
                                     ),
                                   ],
 
-                                  // Action Buttons: Edit, History, Delete
+                                  // Action Buttons: SMS, History, Edit, Delete
                                   const SizedBox(height: 8),
                                   const Divider(height: 1),
                                   Row(
                                     mainAxisAlignment: MainAxisAlignment.end,
                                     children: [
+                                      TextButton.icon(
+                                        icon: const Icon(Icons.sms_outlined,
+                                            size: 16, color: AppTheme.emeraldPrimary),
+                                        label: const Text(
+                                          'Send SMS',
+                                          style: TextStyle(
+                                              fontSize: 12,
+                                              color: AppTheme.emeraldPrimary),
+                                        ),
+                                        onPressed: () => SmsNotificationService.showSmsPreviewDialog(
+                                          context,
+                                          account: currentAccount,
+                                          tx: tx,
+                                          initialPhone: currentAccount.phoneNumber,
+                                        ),
+                                      ),
                                       TextButton.icon(
                                         icon: const Icon(Icons.history,
                                             size: 16, color: Colors.blueGrey),
@@ -425,6 +499,13 @@ class _AccountDetailScreenState extends State<AccountDetailScreen> {
     String currency,
     NumberFormat formatter,
   ) {
+    final loanOrigDate = acc.loanStartDate ?? acc.createdAt;
+    final loanDuration = DateDuration.between(loanOrigDate, DateTime.now());
+    final lastIntPaid = acc.lastInterestPaidDate;
+    final interestDuration = lastIntPaid != null
+        ? DateDuration.between(lastIntPaid, DateTime.now())
+        : null;
+
     return Container(
       width: double.infinity,
       color: AppTheme.emeraldPrimary,
@@ -448,6 +529,8 @@ class _AccountDetailScreenState extends State<AccountDetailScreen> {
             ],
           ),
           const SizedBox(height: 8),
+
+          // Balance Display
           Text(
             acc.isInterestBearing
                 ? '$currency ${formatter.format(acc.totalOutstanding)}'
@@ -458,6 +541,69 @@ class _AccountDetailScreenState extends State<AccountDetailScreen> {
               fontWeight: FontWeight.bold,
             ),
           ),
+
+          // Closed Status Banner
+          if (acc.isClosed) ...[
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.black38,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: AppTheme.amberGold, width: 0.8),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.check_circle, color: AppTheme.amberGold, size: 16),
+                  const SizedBox(width: 6),
+                  Text(
+                    'CLOSED & BACKED UP (${acc.closedAt != null ? DateFormat("dd MMM yyyy").format(acc.closedAt!) : "Settled"})',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+
+          // Assigned Mobile Number Chip
+          if (acc.phoneNumber != null && acc.phoneNumber!.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            InkWell(
+              onTap: () => SmsNotificationService.sendSms(
+                phoneNumber: acc.phoneNumber,
+                message: 'Hello ${acc.name}, this is an update regarding your account with My Money Diary.',
+              ),
+              borderRadius: BorderRadius.circular(16),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.white.withAlpha(25),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.phone_android, size: 13, color: Colors.white70),
+                    const SizedBox(width: 4),
+                    Text(
+                      acc.phoneNumber!,
+                      style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w500),
+                    ),
+                    const SizedBox(width: 8),
+                    const Icon(Icons.sms_outlined, size: 13, color: AppTheme.amberGold),
+                  ],
+                ),
+              ),
+            ),
+          ],
+
+          // Interest Bearing Details & Durations
           if (acc.isInterestBearing) ...[
             const SizedBox(height: 12),
             Container(
@@ -513,11 +659,141 @@ class _AccountDetailScreenState extends State<AccountDetailScreen> {
                 ],
               ),
             ),
-            if (acc.loanStartDate != null) ...[
-              const SizedBox(height: 10),
-              Text(
-                '${acc.type == AccountType.debt ? "Loan Taken On" : "Loan Lent On"}: ${DateFormat("dd MMM yyyy").format(acc.loanStartDate!)}',
-                style: const TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.w500),
+
+            // Elapsed Duration Information (Years, Months, Days)
+            if (!acc.isClosed) ...[
+              const SizedBox(height: 12),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.black26,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: Colors.white12),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Icon(Icons.history_toggle_off, color: AppTheme.amberGold, size: 16),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: RichText(
+                            text: TextSpan(
+                              style: const TextStyle(color: Colors.white, fontSize: 12),
+                              children: [
+                                TextSpan(
+                                  text: '${acc.type == AccountType.debt ? "Loan Borrowed" : "Loan Lent"}: ',
+                                  style: const TextStyle(fontWeight: FontWeight.bold, color: AppTheme.amberGold),
+                                ),
+                                TextSpan(
+                                  text: '${loanDuration.formatExplicit()} ago\n',
+                                  style: const TextStyle(fontWeight: FontWeight.w600),
+                                ),
+                                TextSpan(
+                                  text: '(Since ${DateFormat("dd MMM yyyy").format(loanOrigDate)})',
+                                  style: const TextStyle(color: Colors.white70, fontSize: 11),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const Divider(color: Colors.white12, height: 16),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Icon(Icons.payments_outlined, color: Colors.white70, size: 16),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: RichText(
+                            text: TextSpan(
+                              style: const TextStyle(color: Colors.white, fontSize: 12),
+                              children: [
+                                const TextSpan(
+                                  text: 'Interest Last Paid: ',
+                                  style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white70),
+                                ),
+                                if (interestDuration != null) ...[
+                                  TextSpan(
+                                    text: '${interestDuration.formatExplicit()} ago\n',
+                                    style: const TextStyle(fontWeight: FontWeight.w600, color: Colors.white),
+                                  ),
+                                  TextSpan(
+                                    text: '(Paid on ${DateFormat("dd MMM yyyy").format(lastIntPaid!)})',
+                                    style: const TextStyle(color: Colors.white70, fontSize: 11),
+                                  ),
+                                ] else ...[
+                                  const TextSpan(
+                                    text: 'No interest payment recorded yet\n',
+                                    style: TextStyle(fontStyle: FontStyle.italic, color: AppTheme.amberGold),
+                                  ),
+                                  TextSpan(
+                                    text: '(${loanDuration.formatExplicit()} since loan originated)',
+                                    style: const TextStyle(color: Colors.white70, fontSize: 11),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+
+              // Fully Paid Close Account Button
+              if (acc.totalOutstanding <= 0.01) ...[
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTheme.amberGold,
+                      foregroundColor: AppTheme.emeraldDark,
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    ),
+                    icon: const Icon(Icons.check_circle_outline, size: 18),
+                    label: const Text(
+                      'Mark as Fully Paid & Close Account',
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                    ),
+                    onPressed: () => _confirmCloseAccount(context, acc),
+                  ),
+                ),
+              ],
+            ] else ...[
+              // If Closed
+              const SizedBox(height: 12),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.black26,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.inventory_2_outlined, color: AppTheme.amberGold, size: 18),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Total Loan Lifetime: ${DateDuration.between(loanOrigDate, acc.closedAt ?? DateTime.now()).formatExplicit()}',
+                        style: const TextStyle(color: Colors.white70, fontSize: 12),
+                      ),
+                    ),
+                    TextButton(
+                      style: TextButton.styleFrom(foregroundColor: AppTheme.amberGold),
+                      onPressed: () => _confirmReopenAccount(context, acc),
+                      child: const Text('Reopen'),
+                    ),
+                  ],
+                ),
               ),
             ],
           ],
@@ -541,6 +817,108 @@ class _AccountDetailScreenState extends State<AccountDetailScreen> {
         color: isSelected ? Colors.white : Colors.black87,
         fontSize: 12,
         fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+      ),
+    );
+  }
+
+  // ==================== CLOSE / REOPEN ACCOUNT ====================
+  void _confirmCloseAccount(BuildContext context, Account acc) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.archive, color: AppTheme.amberGold),
+            SizedBox(width: 8),
+            Text('Close Account'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Are you sure you want to close "${acc.name}"?',
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'This account will be archived and kept backed up under "Closed Accounts". It will stop accruing interest and will no longer count towards your active debts or lendings.',
+              style: TextStyle(fontSize: 13),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'All transaction history, statements, receipts, and proofs remain preserved and accessible anytime.',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppTheme.emeraldPrimary,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () async {
+              Navigator.pop(ctx);
+              await context.read<FinanceProvider>().closeAccount(acc.id!);
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Account "${acc.name}" closed and backed up.'),
+                    backgroundColor: AppTheme.emeraldPrimary,
+                  ),
+                );
+              }
+            },
+            child: const Text('Confirm & Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _confirmReopenAccount(BuildContext context, Account acc) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.unarchive, color: AppTheme.emeraldPrimary),
+            SizedBox(width: 8),
+            Text('Reopen Account'),
+          ],
+        ),
+        content: Text('Reopen "${acc.name}" and restore it to your active accounts list?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppTheme.emeraldPrimary,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () async {
+              Navigator.pop(ctx);
+              await context.read<FinanceProvider>().reopenAccount(acc.id!);
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Account "${acc.name}" reopened.'),
+                    backgroundColor: AppTheme.emeraldPrimary,
+                  ),
+                );
+              }
+            },
+            child: const Text('Reopen Account'),
+          ),
+        ],
       ),
     );
   }

@@ -84,6 +84,26 @@ class MainActivity: FlutterActivity() {
                     val list = readSmsMessages(limit)
                     result.success(list)
                 }
+                "sendSms" -> {
+                    val phone = call.argument<String>("phone") ?: ""
+                    val message = call.argument<String>("message") ?: ""
+                    try {
+                        val uri = if (phone.isNotBlank()) {
+                            Uri.parse("smsto:${Uri.encode(phone.trim())}")
+                        } else {
+                            Uri.parse("smsto:")
+                        }
+                        val intent = Intent(Intent.ACTION_SENDTO, uri).apply {
+                            putExtra("sms_body", message)
+                            putExtra(Intent.EXTRA_TEXT, message)
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        startActivity(intent)
+                        result.success(true)
+                    } catch (e: Exception) {
+                        result.error("SMS_ERROR", e.localizedMessage, null)
+                    }
+                }
                 else -> {
                     result.notImplemented()
                 }

@@ -317,6 +317,10 @@ class Account {
   final String allocationRule; // 'interest_first' or 'principal_first'
   final DateTime? lastInterestDate;
   final DateTime? loanStartDate;
+  final String? phoneNumber;
+  final bool isClosed;
+  final DateTime? closedAt;
+  final DateTime? lastInterestPaidDate;
   final bool isArchived;
   final DateTime createdAt;
 
@@ -336,6 +340,10 @@ class Account {
     this.allocationRule = 'interest_first',
     this.lastInterestDate,
     this.loanStartDate,
+    this.phoneNumber,
+    this.isClosed = false,
+    this.closedAt,
+    this.lastInterestPaidDate,
     this.isArchived = false,
     DateTime? createdAt,
   }) : createdAt = createdAt ?? DateTime.now();
@@ -361,6 +369,10 @@ class Account {
     String? allocationRule,
     DateTime? lastInterestDate,
     DateTime? loanStartDate,
+    String? phoneNumber,
+    bool? isClosed,
+    DateTime? closedAt,
+    DateTime? lastInterestPaidDate,
     bool? isArchived,
     DateTime? createdAt,
   }) {
@@ -380,6 +392,10 @@ class Account {
       allocationRule: allocationRule ?? this.allocationRule,
       lastInterestDate: lastInterestDate ?? this.lastInterestDate,
       loanStartDate: loanStartDate ?? this.loanStartDate,
+      phoneNumber: phoneNumber ?? this.phoneNumber,
+      isClosed: isClosed ?? this.isClosed,
+      closedAt: closedAt ?? this.closedAt,
+      lastInterestPaidDate: lastInterestPaidDate ?? this.lastInterestPaidDate,
       isArchived: isArchived ?? this.isArchived,
       createdAt: createdAt ?? this.createdAt,
     );
@@ -402,6 +418,10 @@ class Account {
       'allocation_rule': allocationRule,
       'last_interest_date': lastInterestDate?.toIso8601String(),
       'loan_start_date': loanStartDate?.toIso8601String(),
+      'phone_number': phoneNumber,
+      'is_closed': isClosed ? 1 : 0,
+      'closed_at': closedAt?.toIso8601String(),
+      'last_interest_paid_date': lastInterestPaidDate?.toIso8601String(),
       'is_archived': isArchived ? 1 : 0,
       'created_at': createdAt.toIso8601String(),
     };
@@ -427,6 +447,14 @@ class Account {
           : null,
       loanStartDate: map['loan_start_date'] != null
           ? DateTime.tryParse(map['loan_start_date'] as String)
+          : null,
+      phoneNumber: map['phone_number'] as String?,
+      isClosed: (map['is_closed'] as int?) == 1,
+      closedAt: map['closed_at'] != null
+          ? DateTime.tryParse(map['closed_at'] as String)
+          : null,
+      lastInterestPaidDate: map['last_interest_paid_date'] != null
+          ? DateTime.tryParse(map['last_interest_paid_date'] as String)
           : null,
       isArchived: (map['is_archived'] as int?) == 1,
       createdAt: map['created_at'] != null

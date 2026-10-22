@@ -28,7 +28,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 4,
+      version: 5,
       onCreate: _createDB,
       onUpgrade: _onUpgrade,
     );
@@ -133,6 +133,22 @@ class DatabaseHelper {
       // 3. Seed Govt Account if missing
       await _seedGovtAccountIfMissing(db);
     }
+
+    if (oldVersion < 5) {
+      // 1. Accounts phone_number, is_closed, closed_at, last_interest_paid_date
+      try {
+        await db.execute('ALTER TABLE accounts ADD COLUMN phone_number TEXT;');
+      } catch (_) {}
+      try {
+        await db.execute('ALTER TABLE accounts ADD COLUMN is_closed INTEGER NOT NULL DEFAULT 0;');
+      } catch (_) {}
+      try {
+        await db.execute('ALTER TABLE accounts ADD COLUMN closed_at TEXT;');
+      } catch (_) {}
+      try {
+        await db.execute('ALTER TABLE accounts ADD COLUMN last_interest_paid_date TEXT;');
+      } catch (_) {}
+    }
   }
 
   Future<void> _createDB(Database db, int version) async {
@@ -154,6 +170,10 @@ class DatabaseHelper {
         allocation_rule TEXT NOT NULL DEFAULT 'interest_first',
         last_interest_date TEXT,
         loan_start_date TEXT,
+        phone_number TEXT,
+        is_closed INTEGER NOT NULL DEFAULT 0,
+        closed_at TEXT,
+        last_interest_paid_date TEXT,
         is_archived INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL
       )
@@ -718,6 +738,33 @@ class DatabaseHelper {
     );
   }
 
+  Future<void> closeAccount(int accountId) async {
+    final db = await instance.database;
+    final now = DateTime.now().toIso8601String();
+    await db.update(
+      'accounts',
+      {
+        'is_closed': 1,
+        'closed_at': now,
+      },
+      where: 'id = ?',
+      whereArgs: [accountId],
+    );
+  }
+
+  Future<void> reopenAccount(int accountId) async {
+    final db = await instance.database;
+    await db.update(
+      'accounts',
+      {
+        'is_closed': 0,
+        'closed_at': null,
+      },
+      where: 'id = ?',
+      whereArgs: [accountId],
+    );
+  }
+
   Future<int> deleteAccount(int id) async {
     final db = await instance.database;
     return await db.delete(
@@ -1094,6 +1141,13 @@ class DatabaseHelper {
         newBalance -= factor * tx.amount;
       }
 
+      DateTime? updatedLastInterestPaid = srcAccount.lastInterestPaidDate;
+      if (!isReversal && tx.interestPortion > 0) {
+        if (updatedLastInterestPaid == null || tx.date.isAfter(updatedLastInterestPaid)) {
+          updatedLastInterestPaid = tx.date;
+        }
+      }
+
       await txn.update(
         'accounts',
         srcAccount
@@ -1101,6 +1155,7 @@ class DatabaseHelper {
               balance: newBalance,
               principalBalance: newPrincipal.clamp(0.0, double.infinity),
               accruedInterest: newInterest.clamp(0.0, double.infinity),
+              lastInterestPaidDate: updatedLastInterestPaid,
             )
             .toMap(),
         where: 'id = ?',
@@ -1126,6 +1181,13 @@ class DatabaseHelper {
           newDestPrincipal += factor * tx.amount;
         }
 
+        DateTime? updatedDestLastInterestPaid = destAccount.lastInterestPaidDate;
+        if (!isReversal && tx.interestPortion > 0) {
+          if (updatedDestLastInterestPaid == null || tx.date.isAfter(updatedDestLastInterestPaid)) {
+            updatedDestLastInterestPaid = tx.date;
+          }
+        }
+
         await txn.update(
           'accounts',
           destAccount
@@ -1133,6 +1195,7 @@ class DatabaseHelper {
                 balance: newDestBalance,
                 principalBalance: newDestPrincipal.clamp(0.0, double.infinity),
                 accruedInterest: newDestInterest.clamp(0.0, double.infinity),
+                lastInterestPaidDate: updatedDestLastInterestPaid,
               )
               .toMap(),
           where: 'id = ?',
@@ -1315,6 +1378,7 @@ class DatabaseHelper {
 
     final accounts = await getAccounts();
     for (final acc in accounts) {
+      if (acc.isClosed) continue;
       if (acc.interestRate <= 0.0) continue;
       if (acc.type != AccountType.debt && acc.type != AccountType.lending) continue;
 

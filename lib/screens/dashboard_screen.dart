@@ -407,6 +407,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       {'key': 'investments', 'label': 'Demats & Insurance'},
       {'key': 'others', 'label': 'Others (Editable)'},
       {'key': 'temporary_adjustment', 'label': 'Adjustments'},
+      {'key': 'closed', 'label': 'Closed Accounts (${finance.closedAccounts.length})'},
     ];
 
     return SingleChildScrollView(
@@ -470,8 +471,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
       case 'temporary_adjustment':
         filtered = finance.adjustmentAccounts;
         break;
+      case 'closed':
+        filtered = finance.closedAccounts;
+        break;
       default:
-        filtered = finance.accounts;
+        filtered = finance.activeAccounts;
     }
 
     if (filtered.isEmpty) {
@@ -483,7 +487,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
             Icon(Icons.inbox, size: 48, color: Colors.grey.shade400),
             const SizedBox(height: 8),
             Text(
-              'No accounts found in this category',
+              _selectedCategory == 'closed'
+                  ? 'No closed accounts found in backup'
+                  : 'No accounts found in this category',
               style: TextStyle(color: Colors.grey.shade600),
             ),
           ],
@@ -512,7 +518,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
     String balanceDisplay = '';
     String subtext = '';
 
-    if (acc.isInterestBearing) {
+    if (acc.isClosed) {
+      balanceDisplay = '$currency 0.00';
+      subtext = 'Closed on ${acc.closedAt != null ? DateFormat("dd MMM yyyy").format(acc.closedAt!) : "Settled"}';
+    } else if (acc.isInterestBearing) {
       balanceDisplay = '$currency ${formatter.format(acc.totalOutstanding)}';
       subtext =
           'Principal: $currency ${formatter.format(acc.principalBalance)} | Int: $currency ${formatter.format(acc.accruedInterest)} (@ ${acc.interestRate}% ${acc.interestRateType == "per_month" ? "pm" : "pa"})';
@@ -528,9 +537,30 @@ class _DashboardScreenState extends State<DashboardScreen> {
           backgroundColor: Color(acc.color).withAlpha(40),
           child: Icon(iconData, color: Color(acc.color)),
         ),
-        title: Text(
-          acc.name,
-          style: const TextStyle(fontWeight: FontWeight.w600),
+        title: Row(
+          children: [
+            Expanded(
+              child: Text(
+                acc.name,
+                style: TextStyle(
+                  fontWeight: FontWeight.w600,
+                  color: acc.isClosed ? Colors.grey.shade600 : null,
+                ),
+              ),
+            ),
+            if (acc.isClosed)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade300,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: const Text(
+                  'CLOSED',
+                  style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.black87),
+                ),
+              ),
+          ],
         ),
         subtitle: Text(
           subtext,

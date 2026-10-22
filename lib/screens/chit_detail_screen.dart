@@ -10,6 +10,7 @@ import '../models/transaction_model.dart';
 import '../models/transaction_edit_history.dart';
 import '../providers/finance_provider.dart';
 import '../services/chit_service.dart';
+import '../services/sms_notification_service.dart';
 import '../theme/app_theme.dart';
 import 'add_transaction_screen.dart';
 
@@ -289,6 +290,16 @@ class _ChitDetailScreenState extends State<ChitDetailScreen> {
                           Row(
                             mainAxisAlignment: MainAxisAlignment.end,
                             children: [
+                              TextButton.icon(
+                                icon: const Icon(Icons.sms_outlined, size: 16, color: AppTheme.emeraldPrimary),
+                                label: const Text('Send SMS', style: TextStyle(fontSize: 12, color: AppTheme.emeraldPrimary)),
+                                onPressed: () => SmsNotificationService.showSmsPreviewDialog(
+                                  context,
+                                  account: _account,
+                                  tx: tx,
+                                  initialPhone: _account.phoneNumber,
+                                ),
+                              ),
                               TextButton.icon(
                                 icon: const Icon(Icons.history, size: 16, color: Colors.blueGrey),
                                 label: const Text('History', style: TextStyle(fontSize: 12, color: Colors.blueGrey)),
