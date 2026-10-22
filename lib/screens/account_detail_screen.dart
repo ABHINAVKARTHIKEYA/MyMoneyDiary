@@ -62,7 +62,7 @@ class _AccountDetailScreenState extends State<AccountDetailScreen> {
             tooltip: 'Export Statement (Excel & PDF)',
             onPressed: () => _showExportStatementDialog(context, currentAccount),
           ),
-          // More Account Options (Close/Reopen/Rename)
+          // More Account Options (Close/Reopen/Rename/Archive)
           PopupMenuButton<String>(
             tooltip: 'Account Options',
             onSelected: (val) {
@@ -72,6 +72,10 @@ class _AccountDetailScreenState extends State<AccountDetailScreen> {
                 _confirmReopenAccount(context, currentAccount);
               } else if (val == 'rename') {
                 _showRenameAccountDialog(context, currentAccount);
+              } else if (val == 'archive') {
+                _confirmArchiveAccount(context, currentAccount, true);
+              } else if (val == 'unarchive') {
+                _confirmArchiveAccount(context, currentAccount, false);
               }
             },
             itemBuilder: (ctx) => [
@@ -85,12 +89,34 @@ class _AccountDetailScreenState extends State<AccountDetailScreen> {
                   ],
                 ),
               ),
+              if (currentAccount.isArchived)
+                const PopupMenuItem(
+                  value: 'unarchive',
+                  child: Row(
+                    children: [
+                      Icon(Icons.unarchive, size: 18, color: AppTheme.emeraldPrimary),
+                      SizedBox(width: 8),
+                      Text('Unarchive Account'),
+                    ],
+                  ),
+                )
+              else
+                const PopupMenuItem(
+                  value: 'archive',
+                  child: Row(
+                    children: [
+                      Icon(Icons.archive_outlined, size: 18, color: Colors.blueGrey),
+                      SizedBox(width: 8),
+                      Text('Archive Account'),
+                    ],
+                  ),
+                ),
               if (currentAccount.isClosed)
                 const PopupMenuItem(
                   value: 'reopen',
                   child: Row(
                     children: [
-                      Icon(Icons.unarchive_outlined, size: 18, color: AppTheme.emeraldPrimary),
+                      Icon(Icons.lock_open, size: 18, color: AppTheme.emeraldPrimary),
                       SizedBox(width: 8),
                       Text('Reopen Account'),
                     ],
@@ -101,9 +127,9 @@ class _AccountDetailScreenState extends State<AccountDetailScreen> {
                   value: 'close',
                   child: Row(
                     children: [
-                      Icon(Icons.archive_outlined, size: 18, color: AppTheme.amberGold),
+                      Icon(Icons.lock_outline, size: 18, color: AppTheme.amberGold),
                       SizedBox(width: 8),
-                      Text('Close Account (Archive)'),
+                      Text('Close Account (Settled)'),
                     ],
                   ),
                 ),
@@ -1367,14 +1393,100 @@ class _AccountDetailScreenState extends State<AccountDetailScreen> {
     );
   }
 
+  // ==================== ARCHIVE / UNARCHIVE ACCOUNT ====================
+  void _confirmArchiveAccount(BuildContext context, Account acc, bool archive) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(archive ? 'Archive Account?' : 'Unarchive Account?'),
+        content: Text(
+          archive
+              ? 'Archiving "${acc.name}" will hide it from active selection lists, but all historical transactions and statements remain completely preserved.'
+              : 'Restore "${acc.name}" back to active accounts?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: archive ? Colors.blueGrey : AppTheme.emeraldPrimary,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () async {
+              Navigator.pop(ctx);
+              await context.read<FinanceProvider>().archiveAccount(acc.id!, archive);
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Account "${acc.name}" ${archive ? "archived" : "unarchived"}.')),
+                );
+                if (archive) Navigator.pop(context);
+              }
+            },
+            child: Text(archive ? 'Archive' : 'Unarchive'),
+          ),
+        ],
+      ),
+    );
+  }
+
   // ==================== CONFIRM DELETE ACCOUNT ====================
-  void _confirmDeleteAccount(BuildContext context, Account acc) {
+  void _confirmDeleteAccount(BuildContext context, Account acc) async {
+    final finance = context.read<FinanceProvider>();
+    final canDelete = await finance.canDeleteAccount(acc.id!);
+
+    if (!context.mounted) return;
+
+    if (!canDelete) {
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.shield_outlined, color: AppTheme.amberGold),
+              SizedBox(width: 8),
+              Text('Cannot Delete Account'),
+            ],
+          ),
+          content: Text(
+            'Account "${acc.name}" has transactions recorded in the journal.\n\nTo preserve double-entry ledger integrity, accounts with transaction history cannot be deleted.\n\nWould you like to Archive this account instead? Archived accounts are hidden from active pickers but retain complete historical records.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton.icon(
+              icon: const Icon(Icons.archive_outlined, size: 16),
+              label: const Text('Archive Account Instead'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppTheme.emeraldPrimary,
+                foregroundColor: Colors.white,
+              ),
+              onPressed: () async {
+                Navigator.pop(ctx);
+                await finance.archiveAccount(acc.id!, true);
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Account "${acc.name}" archived successfully.')),
+                  );
+                  Navigator.pop(context);
+                }
+              },
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Delete Account?'),
         content: Text(
-          'Are you sure you want to delete "${acc.name}" and all its transaction history?',
+          'Are you sure you want to permanently delete "${acc.name}"? This account has no recorded transactions and can be safely removed.',
         ),
         actions: [
           TextButton(
@@ -1384,13 +1496,24 @@ class _AccountDetailScreenState extends State<AccountDetailScreen> {
           TextButton(
             onPressed: () async {
               Navigator.pop(ctx);
-              await context.read<FinanceProvider>().deleteAccount(acc.id!);
-              if (context.mounted) {
-                Navigator.pop(context);
+              try {
+                await finance.deleteAccount(acc.id!);
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Account "${acc.name}" deleted.')),
+                  );
+                  Navigator.pop(context);
+                }
+              } catch (e) {
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text(e.toString()), backgroundColor: AppTheme.debitRed),
+                  );
+                }
               }
             },
             style: TextButton.styleFrom(foregroundColor: AppTheme.debitRed),
-            child: const Text('Delete'),
+            child: const Text('Delete Permanently'),
           ),
         ],
       ),

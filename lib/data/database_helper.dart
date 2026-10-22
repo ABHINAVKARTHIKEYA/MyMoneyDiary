@@ -3,6 +3,9 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
 import '../models/account.dart';
+import '../models/account_category.dart';
+import '../models/journal_entry.dart';
+import '../models/audit_log.dart';
 import '../models/chit_details.dart';
 import '../models/transaction_model.dart';
 import '../models/app_settings.dart';
@@ -28,7 +31,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 5,
+      version: 6,
       onCreate: _createDB,
       onUpgrade: _onUpgrade,
     );
@@ -149,6 +152,64 @@ class DatabaseHelper {
         await db.execute('ALTER TABLE accounts ADD COLUMN last_interest_paid_date TEXT;');
       } catch (_) {}
     }
+
+    if (oldVersion < 6) {
+      // 1. Double-Entry columns on accounts
+      try {
+        await db.execute('ALTER TABLE accounts ADD COLUMN code TEXT;');
+      } catch (_) {}
+      try {
+        await db.execute("ALTER TABLE accounts ADD COLUMN category TEXT NOT NULL DEFAULT 'asset';");
+      } catch (_) {}
+      try {
+        await db.execute("ALTER TABLE accounts ADD COLUMN sub_category TEXT NOT NULL DEFAULT 'general';");
+      } catch (_) {}
+      try {
+        await db.execute('ALTER TABLE accounts ADD COLUMN opening_balance REAL NOT NULL DEFAULT 0.0;');
+      } catch (_) {}
+      try {
+        await db.execute('ALTER TABLE accounts ADD COLUMN notes TEXT;');
+      } catch (_) {}
+
+      // 2. Create journal_entries table
+      try {
+        await db.execute('''
+          CREATE TABLE IF NOT EXISTS journal_entries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            transaction_id INTEGER NOT NULL,
+            account_id INTEGER NOT NULL,
+            entry_type TEXT NOT NULL CHECK(entry_type IN ('debit', 'credit')),
+            amount REAL NOT NULL CHECK(amount > 0),
+            memo TEXT,
+            counter_account_id INTEGER,
+            line_order INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (transaction_id) REFERENCES transactions (id) ON DELETE CASCADE,
+            FOREIGN KEY (account_id) REFERENCES accounts (id) ON DELETE RESTRICT
+          )
+        ''');
+        await db.execute('CREATE INDEX IF NOT EXISTS idx_journal_entries_tx ON journal_entries(transaction_id);');
+        await db.execute('CREATE INDEX IF NOT EXISTS idx_journal_entries_acc ON journal_entries(account_id);');
+      } catch (_) {}
+
+      // 3. Create audit_logs table
+      try {
+        await db.execute('''
+          CREATE TABLE IF NOT EXISTS audit_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            transaction_id INTEGER,
+            account_id INTEGER,
+            action TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            changes_json TEXT NOT NULL,
+            timestamp TEXT NOT NULL
+          )
+        ''');
+      } catch (_) {}
+
+      // 4. Seed the full chart of accounts
+      await _seedDoubleEntryChartOfAccounts(db);
+    }
   }
 
   Future<void> _createDB(Database db, int version) async {
@@ -156,11 +217,15 @@ class DatabaseHelper {
     await db.execute('''
       CREATE TABLE accounts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        code TEXT,
         name TEXT NOT NULL,
+        category TEXT NOT NULL DEFAULT 'asset',
+        sub_category TEXT NOT NULL DEFAULT 'general',
         type TEXT NOT NULL,
         icon TEXT NOT NULL,
         color INTEGER NOT NULL,
         balance REAL NOT NULL DEFAULT 0.0,
+        opening_balance REAL NOT NULL DEFAULT 0.0,
         principal_balance REAL NOT NULL DEFAULT 0.0,
         accrued_interest REAL NOT NULL DEFAULT 0.0,
         interest_rate REAL NOT NULL DEFAULT 0.0,
@@ -175,6 +240,7 @@ class DatabaseHelper {
         closed_at TEXT,
         last_interest_paid_date TEXT,
         is_archived INTEGER NOT NULL DEFAULT 0,
+        notes TEXT,
         created_at TEXT NOT NULL
       )
     ''');
@@ -266,7 +332,39 @@ class DatabaseHelper {
       )
     ''');
 
-    // 6. Settings table
+    // 6. Journal Entries table (Double-Entry Line Items)
+    await db.execute('''
+      CREATE TABLE journal_entries (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        transaction_id INTEGER NOT NULL,
+        account_id INTEGER NOT NULL,
+        entry_type TEXT NOT NULL CHECK(entry_type IN ('debit', 'credit')),
+        amount REAL NOT NULL CHECK(amount > 0),
+        memo TEXT,
+        counter_account_id INTEGER,
+        line_order INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (transaction_id) REFERENCES transactions (id) ON DELETE CASCADE,
+        FOREIGN KEY (account_id) REFERENCES accounts (id) ON DELETE RESTRICT
+      )
+    ''');
+    await db.execute('CREATE INDEX idx_journal_entries_tx ON journal_entries(transaction_id);');
+    await db.execute('CREATE INDEX idx_journal_entries_acc ON journal_entries(account_id);');
+
+    // 7. Audit Logs table
+    await db.execute('''
+      CREATE TABLE audit_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        transaction_id INTEGER,
+        account_id INTEGER,
+        action TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        changes_json TEXT NOT NULL,
+        timestamp TEXT NOT NULL
+      )
+    ''');
+
+    // 8. Settings table
     await db.execute('''
       CREATE TABLE settings (
         id INTEGER PRIMARY KEY DEFAULT 1,
@@ -290,8 +388,9 @@ class DatabaseHelper {
       'theme_mode': 'emerald_light',
     });
 
-    // Seed default accounts
+    // Seed default accounts and double-entry chart of accounts
     await _seedDefaultAccounts(db);
+    await _seedDoubleEntryChartOfAccounts(db);
   }
 
   Future<void> _seedDefaultAccounts(Database db) async {
@@ -659,6 +758,356 @@ class DatabaseHelper {
     }
   }
 
+  Future<void> _seedDoubleEntryChartOfAccounts(Database db) async {
+    final now = DateTime.now().toIso8601String();
+
+    final chartOfAccounts = [
+      // 1. ASSETS
+      {
+        'code': 'ASSET_SALARY_BANK',
+        'name': 'Salary Bank Account',
+        'category': 'asset',
+        'sub_category': 'bank',
+        'type': 'salary',
+        'icon': 'work',
+        'color': 0xFF1E88E5,
+      },
+      {
+        'code': 'ASSET_SAVINGS_BANK',
+        'name': 'Savings Account',
+        'category': 'asset',
+        'sub_category': 'bank',
+        'type': 'bank',
+        'icon': 'account_balance',
+        'color': 0xFF0288D1,
+      },
+      {
+        'code': 'ASSET_CASH_WALLET',
+        'name': 'Cash Wallet',
+        'category': 'asset',
+        'sub_category': 'cash',
+        'type': 'pool',
+        'icon': 'account_balance_wallet',
+        'color': 0xFF0F3E33,
+      },
+      {
+        'code': 'ASSET_DEMAT',
+        'name': 'Demat/Stock Account',
+        'category': 'asset',
+        'sub_category': 'demat',
+        'type': 'demat',
+        'icon': 'trending_up',
+        'color': 0xFFE65100,
+      },
+      {
+        'code': 'ASSET_GPF',
+        'name': 'GPF Account',
+        'category': 'asset',
+        'sub_category': 'gpf',
+        'type': 'bank',
+        'icon': 'savings',
+        'color': 0xFF00796B,
+      },
+      {
+        'code': 'ASSET_PROPERTY',
+        'name': 'Property',
+        'category': 'asset',
+        'sub_category': 'property',
+        'type': 'custom',
+        'icon': 'home',
+        'color': 0xFF5D4037,
+      },
+      {
+        'code': 'ASSET_CHIT_RECEIVABLE',
+        'name': 'Chit Fund Receivable',
+        'category': 'asset',
+        'sub_category': 'chit',
+        'type': 'chit',
+        'icon': 'groups',
+        'color': 0xFFB37400,
+      },
+
+      // 2. LIABILITIES
+      {
+        'code': 'LIAB_HOUSING_LOAN',
+        'name': 'Housing Loan',
+        'category': 'liability',
+        'sub_category': 'loan_bank',
+        'type': 'debt',
+        'icon': 'home_work',
+        'color': 0xFFC62828,
+      },
+      {
+        'code': 'LIAB_PERSONAL_LOAN_1',
+        'name': 'Personal Loan 1',
+        'category': 'liability',
+        'sub_category': 'loan_bank',
+        'type': 'debt',
+        'icon': 'account_balance',
+        'color': 0xFFD32F2F,
+      },
+      {
+        'code': 'LIAB_PERSONAL_LOAN_2',
+        'name': 'Personal Loan 2',
+        'category': 'liability',
+        'sub_category': 'loan_bank',
+        'type': 'debt',
+        'icon': 'account_balance',
+        'color': 0xFFE53935,
+      },
+      {
+        'code': 'LIAB_FRIEND_A_LOAN',
+        'name': 'Friend A Loan',
+        'category': 'liability',
+        'sub_category': 'loan_friend',
+        'type': 'debt',
+        'icon': 'person',
+        'color': 0xFFAD1457,
+      },
+      {
+        'code': 'LIAB_FRIEND_B_LOAN',
+        'name': 'Friend B Loan',
+        'category': 'liability',
+        'sub_category': 'loan_friend',
+        'type': 'debt',
+        'icon': 'person',
+        'color': 0xFF880E4F,
+      },
+      {
+        'code': 'LIAB_CREDIT_CARD_1',
+        'name': 'Credit Card 1',
+        'category': 'liability',
+        'sub_category': 'credit_card',
+        'type': 'credit_card',
+        'icon': 'credit_card',
+        'color': 0xFF7B1FA2,
+      },
+      {
+        'code': 'LIAB_CREDIT_CARD_2',
+        'name': 'Credit Card 2',
+        'category': 'liability',
+        'sub_category': 'credit_card',
+        'type': 'credit_card',
+        'icon': 'credit_card',
+        'color': 0xFF4A148C,
+      },
+      {
+        'code': 'LIAB_CHIT_LIABILITY',
+        'name': 'Chit Fund Liability',
+        'category': 'liability',
+        'sub_category': 'chit',
+        'type': 'chit',
+        'icon': 'groups',
+        'color': 0xFFE65100,
+      },
+
+      // 3. INCOME
+      {
+        'code': 'INC_SALARY',
+        'name': 'Salary',
+        'category': 'income',
+        'sub_category': 'income_regular',
+        'type': 'custom',
+        'icon': 'payments',
+        'color': 0xFF2E7D32,
+      },
+      {
+        'code': 'INC_RENT',
+        'name': 'Rent Received',
+        'category': 'income',
+        'sub_category': 'income_regular',
+        'type': 'custom',
+        'icon': 'real_estate_agent',
+        'color': 0xFF388E3C,
+      },
+      {
+        'code': 'INC_DEMAT_PROFIT',
+        'name': 'Demat/Stock Profit',
+        'category': 'income',
+        'sub_category': 'income_regular',
+        'type': 'custom',
+        'icon': 'trending_up',
+        'color': 0xFF43A047,
+      },
+      {
+        'code': 'INC_GPF_RECEIPT',
+        'name': 'GPF Receipt',
+        'category': 'income',
+        'sub_category': 'income_regular',
+        'type': 'custom',
+        'icon': 'savings',
+        'color': 0xFF4CAF50,
+      },
+      {
+        'code': 'INC_PROPERTY_SALE',
+        'name': 'Property Sale Proceeds',
+        'category': 'income',
+        'sub_category': 'income_regular',
+        'type': 'custom',
+        'icon': 'sell',
+        'color': 0xFF66BB6A,
+      },
+      {
+        'code': 'INC_INTEREST',
+        'name': 'Interest Income',
+        'category': 'income',
+        'sub_category': 'income_regular',
+        'type': 'custom',
+        'icon': 'percent',
+        'color': 0xFF81C784,
+      },
+      {
+        'code': 'INC_OTHER',
+        'name': 'Other Income',
+        'category': 'income',
+        'sub_category': 'income_regular',
+        'type': 'custom',
+        'icon': 'attach_money',
+        'color': 0xFFA5D6A7,
+      },
+
+      // 4. EXPENSES
+      {
+        'code': 'EXP_CHIT_CONTRIBUTION',
+        'name': 'Chit Contribution',
+        'category': 'expense',
+        'sub_category': 'chit',
+        'type': 'custom',
+        'icon': 'groups',
+        'color': 0xFFBF360C,
+      },
+      {
+        'code': 'EXP_MILK_BILL',
+        'name': 'Milk Bill',
+        'category': 'expense',
+        'sub_category': 'expense_utility',
+        'type': 'custom',
+        'icon': 'water_drop',
+        'color': 0xFF0277BD,
+      },
+      {
+        'code': 'EXP_CURRENT_BILL',
+        'name': 'Current Bill',
+        'category': 'expense',
+        'sub_category': 'expense_utility',
+        'type': 'custom',
+        'icon': 'electric_bolt',
+        'color': 0xFFF57F17,
+      },
+      {
+        'code': 'EXP_GROCERY',
+        'name': 'Grocery/Kirana',
+        'category': 'expense',
+        'sub_category': 'expense_general',
+        'type': 'custom',
+        'icon': 'shopping_cart',
+        'color': 0xFF558B2F,
+      },
+      {
+        'code': 'EXP_HOUSING_LOAN_INTEREST',
+        'name': 'Housing Loan Interest',
+        'category': 'expense',
+        'sub_category': 'loan_bank',
+        'type': 'custom',
+        'icon': 'home_work',
+        'color': 0xFFC2185B,
+      },
+      {
+        'code': 'EXP_PERSONAL_LOAN_INTEREST',
+        'name': 'Personal Loan Interest',
+        'category': 'expense',
+        'sub_category': 'loan_bank',
+        'type': 'custom',
+        'icon': 'percent',
+        'color': 0xFFD81B60,
+      },
+      {
+        'code': 'EXP_FRIEND_LOAN_INTEREST',
+        'name': 'Friend Loan Interest',
+        'category': 'expense',
+        'sub_category': 'loan_friend',
+        'type': 'custom',
+        'icon': 'percent',
+        'color': 0xFFE91E63,
+      },
+      {
+        'code': 'EXP_CC_INTEREST_CHARGES',
+        'name': 'Credit Card Interest/Charges',
+        'category': 'expense',
+        'sub_category': 'credit_card',
+        'type': 'custom',
+        'icon': 'receipt',
+        'color': 0xFF8E24AA,
+      },
+      {
+        'code': 'EXP_HOUSEHOLD',
+        'name': 'Household Expenses',
+        'category': 'expense',
+        'sub_category': 'expense_general',
+        'type': 'custom',
+        'icon': 'cottage',
+        'color': 0xFF455A64,
+      },
+      {
+        'code': 'EXP_OTHER',
+        'name': 'Other Expenses',
+        'category': 'expense',
+        'sub_category': 'expense_general',
+        'type': 'custom',
+        'icon': 'receipt_long',
+        'color': 0xFF607D8B,
+      },
+
+      // 5. EQUITY
+      {
+        'code': 'EQ_OPENING_BALANCE',
+        'name': 'Opening Balance Adjustment',
+        'category': 'equity',
+        'sub_category': 'equity',
+        'type': 'temporaryAdjustment',
+        'icon': 'balance',
+        'color': 0xFF0F3E33,
+      },
+    ];
+
+    for (final acc in chartOfAccounts) {
+      final existing = await db.query(
+        'accounts',
+        columns: ['id'],
+        where: 'code = ? OR name = ?',
+        whereArgs: [acc['code'], acc['name']],
+        limit: 1,
+      );
+      if (existing.isEmpty) {
+        await db.insert('accounts', {
+          'code': acc['code'],
+          'name': acc['name'],
+          'category': acc['category'],
+          'sub_category': acc['sub_category'],
+          'type': acc['type'],
+          'icon': acc['icon'],
+          'color': acc['color'],
+          'balance': 0.0,
+          'principal_balance': 0.0,
+          'accrued_interest': 0.0,
+          'interest_rate': 0.0,
+          'interest_rate_type': 'per_month',
+          'is_compound': 0,
+          'accrual_mode': 'daily',
+          'allocation_rule': 'interest_first',
+          'last_interest_date': null,
+          'loan_start_date': null,
+          'phone_number': null,
+          'is_closed': 0,
+          'closed_at': null,
+          'last_interest_paid_date': null,
+          'is_archived': 0,
+          'created_at': now,
+        });
+      }
+    }
+  }
+
   // ==================== ACCOUNTS ====================
 
   Future<int> insertAccount(Account account) async {
@@ -765,13 +1214,115 @@ class DatabaseHelper {
     );
   }
 
-  Future<int> deleteAccount(int id) async {
+  Future<bool> canDeleteAccount(int id) async {
     final db = await instance.database;
+    // 1. Check if any transactions involve this account
+    final txResult = await db.rawQuery(
+      'SELECT COUNT(*) as count FROM transactions WHERE account_id = ? OR to_account_id = ?',
+      [id, id],
+    );
+    final txCount = (txResult.first['count'] as num?)?.toInt() ?? 0;
+    if (txCount > 0) return false;
+
+    // 2. Check if any journal entries involve this account
+    try {
+      final jnResult = await db.rawQuery(
+        'SELECT COUNT(*) as count FROM journal_entries WHERE account_id = ? OR counter_account_id = ?',
+        [id, id],
+      );
+      final jnCount = (jnResult.first['count'] as num?)?.toInt() ?? 0;
+      if (jnCount > 0) return false;
+    } catch (_) {}
+
+    return true;
+  }
+
+  Future<int> deleteAccount(int id, {String? reason}) async {
+    final canDelete = await canDeleteAccount(id);
+    if (!canDelete) {
+      throw StateError(
+        'Cannot delete account with existing transactions. Please archive it instead.',
+      );
+    }
+    final db = await instance.database;
+    await logAudit(
+      accountId: id,
+      action: 'delete',
+      reason: reason ?? 'Account deleted',
+      changesJson: '{"account_id": $id}',
+    );
     return await db.delete(
       'accounts',
       where: 'id = ?',
       whereArgs: [id],
     );
+  }
+
+  Future<int> archiveAccount(int accountId, bool archive, {String? reason}) async {
+    final db = await instance.database;
+    await logAudit(
+      accountId: accountId,
+      action: archive ? 'archive' : 'unarchive',
+      reason: reason ?? (archive ? 'Account archived' : 'Account unarchived'),
+      changesJson: '{"is_archived": ${archive ? 1 : 0}}',
+    );
+    return await db.update(
+      'accounts',
+      {'is_archived': archive ? 1 : 0},
+      where: 'id = ?',
+      whereArgs: [accountId],
+    );
+  }
+
+  Future<int> renameAccount(int accountId, String newName, {String? reason}) async {
+    final db = await instance.database;
+    final old = await getAccountById(accountId);
+    await logAudit(
+      accountId: accountId,
+      action: 'rename',
+      reason: reason ?? 'Account renamed from ${old?.name} to $newName',
+      changesJson: '{"old_name": "${old?.name}", "new_name": "$newName"}',
+    );
+    return await db.update(
+      'accounts',
+      {'name': newName},
+      where: 'id = ?',
+      whereArgs: [accountId],
+    );
+  }
+
+  Future<List<Account>> getAccountsByCategory(AccountCategory category, {bool includeArchived = false}) async {
+    final db = await instance.database;
+    final whereClause = includeArchived
+        ? 'category = ?'
+        : 'category = ? AND is_archived = 0';
+    final result = await db.query(
+      'accounts',
+      where: whereClause,
+      whereArgs: [category.key],
+      orderBy: 'name ASC',
+    );
+    return result.map((m) => Account.fromMap(m)).toList();
+  }
+
+  Future<void> logAudit({
+    int? transactionId,
+    int? accountId,
+    required String action,
+    required String reason,
+    required String changesJson,
+  }) async {
+    try {
+      final db = await instance.database;
+      await db.insert('audit_logs', {
+        'transaction_id': transactionId,
+        'account_id': accountId,
+        'action': action,
+        'reason': reason,
+        'changes_json': changesJson,
+        'timestamp': DateTime.now().toIso8601String(),
+      });
+    } catch (_) {}
   }
 
   // ==================== TRANSACTIONS ====================

@@ -1,6 +1,9 @@
 import 'package:flutter/foundation.dart';
 import '../data/database_helper.dart';
 import '../models/account.dart';
+import '../models/account_category.dart';
+import '../models/journal_entry.dart';
+import '../models/audit_log.dart';
 import '../models/chit_details.dart';
 import '../models/transaction_model.dart';
 import '../models/app_settings.dart';
@@ -65,6 +68,20 @@ class FinanceProvider with ChangeNotifier {
   List<Account> get customAccounts =>
       _accounts.where((a) => a.type == AccountType.custom && !a.isClosed).toList();
 
+  // Double-Entry Master Category Getters
+  List<Account> get assetAccounts =>
+      _accounts.where((a) => a.category == AccountCategory.asset && !a.isArchived).toList();
+  List<Account> get liabilityAccounts =>
+      _accounts.where((a) => a.category == AccountCategory.liability && !a.isArchived).toList();
+  List<Account> get incomeAccounts =>
+      _accounts.where((a) => a.category == AccountCategory.income && !a.isArchived).toList();
+  List<Account> get expenseAccounts =>
+      _accounts.where((a) => a.category == AccountCategory.expense && !a.isArchived).toList();
+  List<Account> get equityAccounts =>
+      _accounts.where((a) => a.category == AccountCategory.equity && !a.isArchived).toList();
+  List<Account> get archivedAccounts =>
+      _accounts.where((a) => a.isArchived).toList();
+
   // Aggregate Metrics
   double get totalAvailablePool =>
       poolAccounts.fold(0.0, (sum, a) => sum + a.balance);
@@ -124,8 +141,22 @@ class FinanceProvider with ChangeNotifier {
     await loadAllData();
   }
 
-  Future<void> deleteAccount(int id) async {
-    await _dbHelper.deleteAccount(id);
+  Future<bool> canDeleteAccount(int id) async {
+    return await _dbHelper.canDeleteAccount(id);
+  }
+
+  Future<void> deleteAccount(int id, {String? reason}) async {
+    await _dbHelper.deleteAccount(id, reason: reason);
+    await loadAllData();
+  }
+
+  Future<void> archiveAccount(int accountId, bool archive, {String? reason}) async {
+    await _dbHelper.archiveAccount(accountId, archive, reason: reason);
+    await loadAllData();
+  }
+
+  Future<void> renameAccount(int accountId, String newName, {String? reason}) async {
+    await _dbHelper.renameAccount(accountId, newName, reason: reason);
     await loadAllData();
   }
 

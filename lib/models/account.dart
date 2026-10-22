@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'account_category.dart';
 
 enum AccountType {
   pool,
@@ -303,8 +304,12 @@ extension AccountTypeExtension on AccountType {
 
 class Account {
   final int? id;
+  final String code;
   final String name;
   final AccountType type;
+  final AccountCategory category;
+  final String subCategory;
+  final double openingBalance;
   final String icon;
   final int color;
   final double balance;
@@ -322,12 +327,17 @@ class Account {
   final DateTime? closedAt;
   final DateTime? lastInterestPaidDate;
   final bool isArchived;
+  final String? notes;
   final DateTime createdAt;
 
   Account({
     this.id,
+    String? code,
     required this.name,
     required this.type,
+    AccountCategory? category,
+    String? subCategory,
+    this.openingBalance = 0.0,
     this.icon = 'account_balance_wallet',
     this.color = 0xFF0F3E33,
     this.balance = 0.0,
@@ -345,8 +355,75 @@ class Account {
     this.closedAt,
     this.lastInterestPaidDate,
     this.isArchived = false,
+    this.notes,
     DateTime? createdAt,
-  }) : createdAt = createdAt ?? DateTime.now();
+  })  : code = code ?? _generateDefaultCode(name, type),
+        category = category ?? _deriveCategoryFromType(type),
+        subCategory = subCategory ?? _deriveSubCategoryFromType(type),
+        createdAt = createdAt ?? DateTime.now();
+
+  static AccountCategory _deriveCategoryFromType(AccountType type) {
+    switch (type) {
+      case AccountType.pool:
+      case AccountType.salary:
+      case AccountType.bank:
+      case AccountType.lending:
+      case AccountType.demat:
+      case AccountType.insurance:
+        return AccountCategory.asset;
+      case AccountType.creditCard:
+      case AccountType.debt:
+      case AccountType.chit:
+        return AccountCategory.liability;
+      case AccountType.temporaryAdjustment:
+        return AccountCategory.equity;
+      case AccountType.maintenance:
+      case AccountType.miscellaneous:
+      case AccountType.other1:
+      case AccountType.other2:
+      case AccountType.other3:
+      case AccountType.other4:
+      case AccountType.other5:
+      case AccountType.other6:
+      case AccountType.other7:
+      case AccountType.other8:
+      case AccountType.custom:
+        return AccountCategory.expense;
+    }
+  }
+
+  static String _deriveSubCategoryFromType(AccountType type) {
+    switch (type) {
+      case AccountType.pool:
+        return 'cash';
+      case AccountType.salary:
+      case AccountType.bank:
+        return 'bank';
+      case AccountType.creditCard:
+        return 'credit_card';
+      case AccountType.debt:
+        return 'loan_friend';
+      case AccountType.lending:
+        return 'lending';
+      case AccountType.chit:
+        return 'chit';
+      case AccountType.insurance:
+        return 'insurance';
+      case AccountType.demat:
+        return 'demat';
+      case AccountType.temporaryAdjustment:
+        return 'equity';
+      default:
+        return 'general';
+    }
+  }
+
+  static String _generateDefaultCode(String name, AccountType type) {
+    final clean = name.toUpperCase().replaceAll(RegExp(r'[^A-Z0-9]'), '_').replaceAll(RegExp(r'_+'), '_');
+    return '${type.key.toUpperCase()}_$clean';
+  }
+
+  NormalBalance get normalBalance => category.normalBalance;
 
   bool get isInterestBearing =>
       type == AccountType.debt || type == AccountType.lending;
@@ -355,8 +432,12 @@ class Account {
 
   Account copyWith({
     int? id,
+    String? code,
     String? name,
     AccountType? type,
+    AccountCategory? category,
+    String? subCategory,
+    double? openingBalance,
     String? icon,
     int? color,
     double? balance,
@@ -374,12 +455,17 @@ class Account {
     DateTime? closedAt,
     DateTime? lastInterestPaidDate,
     bool? isArchived,
+    String? notes,
     DateTime? createdAt,
   }) {
     return Account(
       id: id ?? this.id,
+      code: code ?? this.code,
       name: name ?? this.name,
       type: type ?? this.type,
+      category: category ?? this.category,
+      subCategory: subCategory ?? this.subCategory,
+      openingBalance: openingBalance ?? this.openingBalance,
       icon: icon ?? this.icon,
       color: color ?? this.color,
       balance: balance ?? this.balance,
@@ -397,6 +483,7 @@ class Account {
       closedAt: closedAt ?? this.closedAt,
       lastInterestPaidDate: lastInterestPaidDate ?? this.lastInterestPaidDate,
       isArchived: isArchived ?? this.isArchived,
+      notes: notes ?? this.notes,
       createdAt: createdAt ?? this.createdAt,
     );
   }
@@ -404,8 +491,12 @@ class Account {
   Map<String, dynamic> toMap() {
     return {
       'id': id,
+      'code': code,
       'name': name,
       'type': type.key,
+      'category': category.key,
+      'sub_category': subCategory,
+      'opening_balance': openingBalance,
       'icon': icon,
       'color': color,
       'balance': balance,
@@ -423,15 +514,25 @@ class Account {
       'closed_at': closedAt?.toIso8601String(),
       'last_interest_paid_date': lastInterestPaidDate?.toIso8601String(),
       'is_archived': isArchived ? 1 : 0,
+      'notes': notes,
       'created_at': createdAt.toIso8601String(),
     };
   }
 
   factory Account.fromMap(Map<String, dynamic> map) {
+    final type = AccountTypeExtension.fromKey(map['type'] as String);
+    final cat = map['category'] != null
+        ? AccountCategoryExtension.fromKey(map['category'] as String)
+        : _deriveCategoryFromType(type);
+
     return Account(
       id: map['id'] as int?,
+      code: map['code'] as String?,
       name: map['name'] as String,
-      type: AccountTypeExtension.fromKey(map['type'] as String),
+      type: type,
+      category: cat,
+      subCategory: map['sub_category'] as String?,
+      openingBalance: (map['opening_balance'] as num?)?.toDouble() ?? 0.0,
       icon: map['icon'] as String? ?? 'account_balance_wallet',
       color: map['color'] as int? ?? 0xFF0F3E33,
       balance: (map['balance'] as num?)?.toDouble() ?? 0.0,
@@ -457,6 +558,7 @@ class Account {
           ? DateTime.tryParse(map['last_interest_paid_date'] as String)
           : null,
       isArchived: (map['is_archived'] as int?) == 1,
+      notes: map['notes'] as String?,
       createdAt: map['created_at'] != null
           ? DateTime.parse(map['created_at'] as String)
           : DateTime.now(),

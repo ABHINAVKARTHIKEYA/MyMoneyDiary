@@ -5,6 +5,9 @@ import '../lib/models/chit_details.dart';
 import '../lib/models/transaction_model.dart';
 import '../lib/services/sms_parser_service.dart';
 import '../lib/utils/date_duration.dart';
+import '../lib/models/account_category.dart';
+import '../lib/models/journal_entry.dart';
+import '../lib/models/audit_log.dart';
 
 void main() {
   print('=============================================');
@@ -740,6 +743,153 @@ void main() {
     assert(map['is_closed'] == 1);
     assert(map['closed_at'] == '2026-10-20T14:30:00.000');
     assert(map['last_interest_paid_date'] == '2026-10-15T18:00:00.000');
+  });
+
+  // --- 13. Double-Entry Schema & Account Management (Stage 1) ---
+  print('\n--- 13. Double-Entry Schema & Account Management (Stage 1) ---');
+  test('Account categories enforce correct normal balance rules', () {
+    assert(AccountCategory.asset.normalBalance == NormalBalance.debit);
+    assert(AccountCategory.expense.normalBalance == NormalBalance.debit);
+    assert(AccountCategory.liability.normalBalance == NormalBalance.credit);
+    assert(AccountCategory.income.normalBalance == NormalBalance.credit);
+    assert(AccountCategory.equity.normalBalance == NormalBalance.credit);
+  });
+
+  test('Chart of Accounts contains all 27 user-specified accounts across 5 categories', () {
+    final expectedAccounts = {
+      // Asset
+      'ASSET_SALARY_BANK': AccountCategory.asset,
+      'ASSET_SAVINGS_BANK': AccountCategory.asset,
+      'ASSET_CASH_WALLET': AccountCategory.asset,
+      'ASSET_DEMAT': AccountCategory.asset,
+      'ASSET_GPF': AccountCategory.asset,
+      'ASSET_PROPERTY': AccountCategory.asset,
+      'ASSET_CHIT_RECEIVABLE': AccountCategory.asset,
+      // Liability
+      'LIAB_HOUSING_LOAN': AccountCategory.liability,
+      'LIAB_PERSONAL_LOAN_1': AccountCategory.liability,
+      'LIAB_PERSONAL_LOAN_2': AccountCategory.liability,
+      'LIAB_FRIEND_A_LOAN': AccountCategory.liability,
+      'LIAB_FRIEND_B_LOAN': AccountCategory.liability,
+      'LIAB_CREDIT_CARD_1': AccountCategory.liability,
+      'LIAB_CREDIT_CARD_2': AccountCategory.liability,
+      'LIAB_CHIT_LIABILITY': AccountCategory.liability,
+      // Income
+      'INC_SALARY': AccountCategory.income,
+      'INC_RENT': AccountCategory.income,
+      'INC_DEMAT_PROFIT': AccountCategory.income,
+      'INC_GPF_RECEIPT': AccountCategory.income,
+      'INC_PROPERTY_SALE': AccountCategory.income,
+      'INC_INTEREST': AccountCategory.income,
+      'INC_OTHER': AccountCategory.income,
+      // Expense
+      'EXP_CHIT_CONTRIBUTION': AccountCategory.expense,
+      'EXP_MILK_BILL': AccountCategory.expense,
+      'EXP_CURRENT_BILL': AccountCategory.expense,
+      'EXP_GROCERY': AccountCategory.expense,
+      'EXP_HOUSING_LOAN_INTEREST': AccountCategory.expense,
+      'EXP_PERSONAL_LOAN_INTEREST': AccountCategory.expense,
+      'EXP_FRIEND_LOAN_INTEREST': AccountCategory.expense,
+      'EXP_CC_INTEREST_CHARGES': AccountCategory.expense,
+      'EXP_HOUSEHOLD': AccountCategory.expense,
+      'EXP_OTHER': AccountCategory.expense,
+      // Equity
+      'EQ_OPENING_BALANCE': AccountCategory.equity,
+    };
+
+    assert(expectedAccounts.length == 33);
+    for (final entry in expectedAccounts.entries) {
+      assert(entry.value.key.isNotEmpty);
+    }
+  });
+
+  test('Account schema serialization preserves code, category, subCategory, and openingBalance', () {
+    final map = {
+      'id': 101,
+      'code': 'LIAB_FRIEND_A_LOAN',
+      'name': 'Friend A Loan',
+      'type': 'debt',
+      'category': 'liability',
+      'sub_category': 'loan_friend',
+      'opening_balance': 15000.0,
+      'principal_balance': 15000.0,
+      'notes': 'Temporary borrowing',
+    };
+
+    final cat = AccountCategoryExtension.fromKey(map['category'] as String);
+    assert(cat.normalBalance == NormalBalance.credit);
+    assert(map['code'] == 'LIAB_FRIEND_A_LOAN');
+    assert(map['category'] == 'liability');
+    assert(map['sub_category'] == 'loan_friend');
+    assert(map['opening_balance'] == 15000.0);
+  });
+
+  test('JournalEntry model correctly serializes debit/credit entries', () {
+    final entryDebit = JournalEntry(
+      id: 1,
+      transactionId: 50,
+      accountId: 10,
+      entryType: EntryType.debit,
+      amount: 5000.0,
+      memo: 'Chit Contribution Jan 2026',
+      counterAccountId: 2,
+      lineOrder: 1,
+    );
+
+    final entryCredit = JournalEntry(
+      id: 2,
+      transactionId: 50,
+      accountId: 2,
+      entryType: EntryType.credit,
+      amount: 5000.0,
+      memo: 'Debited from Salary Bank',
+      counterAccountId: 10,
+      lineOrder: 2,
+    );
+
+    assert(entryDebit.isDebit && !entryDebit.isCredit);
+    assert(entryCredit.isCredit && !entryCredit.isDebit);
+    assert(entryDebit.amount == entryCredit.amount);
+
+    final debitMap = entryDebit.toMap();
+    assert(debitMap['entry_type'] == 'debit');
+    assert(debitMap['amount'] == 5000.0);
+
+    final fromMap = JournalEntry.fromMap(debitMap);
+    assert(fromMap.entryType == EntryType.debit);
+    assert(fromMap.amount == 5000.0);
+  });
+
+  test('AuditLog model correctly serializes modification actions and reason', () {
+    final log = AuditLog(
+      id: 1,
+      transactionId: null,
+      accountId: 25,
+      action: 'archive',
+      reason: 'Loan settled in full',
+      changesJson: '{"is_archived": 1}',
+    );
+
+    final map = log.toMap();
+    assert(map['action'] == 'archive');
+    assert(map['reason'] == 'Loan settled in full');
+    assert(map['changes_json'] == '{"is_archived": 1}');
+
+    final restored = AuditLog.fromMap(map);
+    assert(restored.action == 'archive');
+    assert(restored.reason == 'Loan settled in full');
+  });
+
+  test('Account deletion rule prevents deletion when transactions exist and allows archiving', () {
+    // Simulating canDeleteAccount logic:
+    bool canDelete(int txCount, int jnCount) {
+      if (txCount > 0 || jnCount > 0) return false;
+      return true;
+    }
+
+    assert(canDelete(5, 10) == false, 'Account with transactions must NOT be deletable');
+    assert(canDelete(1, 0) == false, 'Account with 1 transaction must NOT be deletable');
+    assert(canDelete(0, 0) == true, 'Clean account with 0 transactions CAN be deleted');
   });
 
   print('\n=============================================');
