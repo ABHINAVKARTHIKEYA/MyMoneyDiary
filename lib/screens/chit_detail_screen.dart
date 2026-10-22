@@ -530,6 +530,12 @@ class _ChitDetailScreenState extends State<ChitDetailScreen> {
     String paymentMode = 'UPI';
     String? receiptPath;
 
+    final accounts = context.read<FinanceProvider>().accounts;
+    Account? selectedSourceAccount = accounts.firstWhere(
+      (a) => a.code == 'ASSET_SALARY_BANK' || a.name.toLowerCase().contains('salary'),
+      orElse: () => accounts.firstWhere((a) => a.id != details.accountId, orElse: () => accounts.first),
+    );
+
     showDialog(
       context: context,
       builder: (ctx) => StatefulBuilder(
@@ -546,6 +552,26 @@ class _ChitDetailScreenState extends State<ChitDetailScreen> {
                         ? 'Updated Installment (Post-Lifting): $currency ${nominal.toStringAsFixed(2)}'
                         : 'Current Installment (Pre-Lifting): $currency ${nominal.toStringAsFixed(2)}',
                     style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 12),
+
+                  // Funding Source Account
+                  DropdownButtonFormField<Account>(
+                    value: selectedSourceAccount,
+                    decoration: const InputDecoration(
+                      labelText: 'Paid From (Funding Source Account) *',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.account_balance, color: AppTheme.emeraldPrimary),
+                    ),
+                    items: accounts.map((acc) {
+                      return DropdownMenuItem(
+                        value: acc,
+                        child: Text('${acc.name} (${acc.category.displayName})', style: const TextStyle(fontSize: 13)),
+                      );
+                    }).toList(),
+                    onChanged: (val) {
+                      if (val != null) setDialogState(() => selectedSourceAccount = val);
+                    },
                   ),
                   const SizedBox(height: 12),
 
@@ -724,11 +750,13 @@ class _ChitDetailScreenState extends State<ChitDetailScreen> {
                 onPressed: () async {
                   Navigator.pop(ctx);
                   final finance = context.read<FinanceProvider>();
+                  final srcAcc = selectedSourceAccount;
                   final tx = TransactionModel(
-                    accountId: details.accountId,
-                    type: TransactionType.debit,
+                    accountId: srcAcc?.id ?? details.accountId,
+                    toAccountId: details.accountId,
+                    type: TransactionType.chitPayment,
                     amount: netToPay,
-                    category: 'Chit Installment (Month ${details.currentMonth + 1})',
+                    category: 'Chit Contribution (Month ${details.currentMonth + 1})',
                     note: noteController.text.trim().isNotEmpty
                         ? noteController.text.trim()
                         : 'Dividend: $currency ${dividendController.text}',
@@ -737,7 +765,8 @@ class _ChitDetailScreenState extends State<ChitDetailScreen> {
                     otherPaymentModeDetails: paymentMode == 'Others' ? otherModeController.text.trim() : null,
                     receiptPath: receiptPath,
                     debitAccountName: widget.account.name,
-                    creditAccountName: 'Chit Fund',
+                    creditAccountName: srcAcc?.name ?? 'Payment Source',
+                    chitGroupName: widget.account.name,
                   );
                   await finance.addTransaction(tx);
                   await finance.updateChitDetails(
@@ -934,85 +963,123 @@ class _ChitDetailScreenState extends State<ChitDetailScreen> {
     final prizeMoneyController = TextEditingController();
     final discountController = TextEditingController();
 
+    final accounts = context.read<FinanceProvider>().accounts;
+    Account? selectedDestAccount = accounts.firstWhere(
+      (a) => a.code == 'ASSET_SALARY_BANK' || a.name.toLowerCase().contains('salary'),
+      orElse: () => accounts.firstWhere((a) => a.id != details.accountId, orElse: () => accounts.first),
+    );
+
     showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Record Chit Lifted / Won'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                'Enter the auction / prize money details for this chit (Total Value: $currency ${details.totalValue.toStringAsFixed(0)}).',
-                style: TextStyle(fontSize: 13, color: Colors.grey.shade700),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) {
+          return AlertDialog(
+            title: const Text('Record Chit Lifted / Won'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Enter the auction / prize money details for this chit (Total Value: $currency ${details.totalValue.toStringAsFixed(0)}).',
+                    style: TextStyle(fontSize: 13, color: Colors.grey.shade700),
+                  ),
+                  const SizedBox(height: 12),
+
+                  // Receiving Account
+                  DropdownButtonFormField<Account>(
+                    value: selectedDestAccount,
+                    decoration: const InputDecoration(
+                      labelText: 'Deposit Prize Money To *',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.account_balance, color: AppTheme.creditGreen),
+                    ),
+                    items: accounts.map((acc) {
+                      return DropdownMenuItem(
+                        value: acc,
+                        child: Text('${acc.name} (${acc.category.displayName})', style: const TextStyle(fontSize: 13)),
+                      );
+                    }).toList(),
+                    onChanged: (val) {
+                      if (val != null) setDialogState(() => selectedDestAccount = val);
+                    },
+                  ),
+                  const SizedBox(height: 12),
+
+                  TextFormField(
+                    controller: prizeMoneyController,
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    decoration: InputDecoration(
+                      labelText: 'Net Prize Money Received',
+                      prefixText: '$currency ',
+                      border: const OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: discountController,
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    decoration: InputDecoration(
+                      labelText: 'Bid Discount / Surrendered',
+                      prefixText: '$currency ',
+                      border: const OutlineInputBorder(),
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: prizeMoneyController,
-                keyboardType:
-                    const TextInputType.numberWithOptions(decimal: true),
-                decoration: InputDecoration(
-                  labelText: 'Net Prize Money Received',
-                  prefixText: '$currency ',
-                ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Cancel'),
               ),
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: discountController,
-                keyboardType:
-                    const TextInputType.numberWithOptions(decimal: true),
-                decoration: InputDecoration(
-                  labelText: 'Bid Discount / Surrendered',
-                  prefixText: '$currency ',
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppTheme.amberGold,
+                  foregroundColor: AppTheme.emeraldDark,
                 ),
+                onPressed: () async {
+                  final prize = double.tryParse(prizeMoneyController.text) ?? 0.0;
+                  final discount = double.tryParse(discountController.text) ?? 0.0;
+                  if (prize <= 0) return;
+
+                  Navigator.pop(ctx);
+                  final finance = context.read<FinanceProvider>();
+                  final destAcc = selectedDestAccount;
+
+                  await finance.updateChitDetails(
+                    details.copyWith(
+                      isLifted: true,
+                      liftedMonth: details.currentMonth,
+                      prizeMoneyReceived: prize,
+                      bidDiscount: discount,
+                    ),
+                  );
+
+                  // Record Balanced Prize Money Entry
+                  await finance.addTransaction(
+                    TransactionModel(
+                      accountId: details.accountId,
+                      toAccountId: destAcc?.id,
+                      type: TransactionType.chitReceipt,
+                      amount: prize,
+                      category: 'Chit Prize Money (Lifted)',
+                      note: 'Surrendered Discount: $currency $discount',
+                      date: DateTime.now(),
+                      debitAccountName: destAcc?.name ?? 'Receiving Account',
+                      creditAccountName: widget.account.name,
+                      chitGroupName: widget.account.name,
+                    ),
+                  );
+
+                  _loadChitData();
+                },
+                child: const Text('Confirm Lifted'),
               ),
             ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppTheme.amberGold,
-              foregroundColor: AppTheme.emeraldDark,
-            ),
-            onPressed: () async {
-              final prize = double.tryParse(prizeMoneyController.text) ?? 0.0;
-              final discount = double.tryParse(discountController.text) ?? 0.0;
-              if (prize <= 0) return;
-
-              Navigator.pop(ctx);
-              final finance = context.read<FinanceProvider>();
-
-              await finance.updateChitDetails(
-                details.copyWith(
-                  isLifted: true,
-                  liftedMonth: details.currentMonth,
-                  prizeMoneyReceived: prize,
-                  bidDiscount: discount,
-                ),
-              );
-
-              // Record Prize Money Credit to Chit Account
-              await finance.addTransaction(
-                TransactionModel(
-                  accountId: details.accountId,
-                  type: TransactionType.credit,
-                  amount: prize,
-                  category: 'Chit Prize Money (Lifted)',
-                  note: 'Surrendered Discount: $currency $discount',
-                  date: DateTime.now(),
-                ),
-              );
-
-              _loadChitData();
-            },
-            child: const Text('Confirm Lifted'),
-          ),
-        ],
+          );
+        },
       ),
     );
   }

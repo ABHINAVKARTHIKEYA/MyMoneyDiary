@@ -342,6 +342,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     );
                   },
                 ),
+                const Divider(height: 1),
+                ListTile(
+                  leading: const Icon(Icons.dataset_outlined, color: AppTheme.amberGold),
+                  title: const Text('Load Realistic Double-Entry Sample Scenarios'),
+                  subtitle: const Text(
+                    'Loads all 5 core double-entry scenarios (Chits, Milk, Credit Card, Compound Loan, Friend Debt)',
+                    style: TextStyle(fontSize: 12),
+                  ),
+                  trailing: const Icon(Icons.play_circle_outline, color: AppTheme.emeraldPrimary),
+                  onTap: () async {
+                    final count = await finance.seedDemoDoubleEntryScenarios();
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('Seeded $count balanced double-entry transactions! Check Master Journal and Account Ledgers.'),
+                          backgroundColor: AppTheme.emeraldPrimary,
+                        ),
+                      );
+                    }
+                  },
+                ),
               ],
             ),
           ),

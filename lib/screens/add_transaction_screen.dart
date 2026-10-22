@@ -44,6 +44,12 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
   final TextEditingController _principalPortionController = TextEditingController();
   final TextEditingController _interestPortionController = TextEditingController();
 
+  // Formal double-entry auxiliary controllers
+  final TextEditingController _billNumberController = TextEditingController();
+  final TextEditingController _personNameController = TextEditingController();
+  final TextEditingController _chitGroupController = TextEditingController();
+  final TextEditingController _referenceNumberController = TextEditingController();
+
   DateTime _selectedDate = DateTime.now();
   TimeOfDay _selectedTime = TimeOfDay.now();
 
@@ -90,6 +96,10 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
       if (tx.interestPortion > 0) {
         _interestPortionController.text = tx.interestPortion.toStringAsFixed(2);
       }
+      _billNumberController.text = tx.billNumber ?? '';
+      _personNameController.text = tx.personName ?? '';
+      _chitGroupController.text = tx.chitGroupName ?? '';
+      _referenceNumberController.text = tx.referenceNumber ?? '';
     } else {
       if (_selectedAccount?.type == AccountType.salary && _type == TransactionType.credit) {
         _counterpartyController.text = 'Govt Account';
@@ -115,10 +125,25 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
     _recipientPhoneController.dispose();
     _principalPortionController.dispose();
     _interestPortionController.dispose();
+    _billNumberController.dispose();
+    _personNameController.dispose();
+    _chitGroupController.dispose();
+    _referenceNumberController.dispose();
     super.dispose();
   }
 
+  bool get _requiresTwoAccounts =>
+      _isTransferMode ||
+      _type == TransactionType.transfer ||
+      _type == TransactionType.loanRepayment ||
+      _type == TransactionType.creditCardPayment ||
+      _type == TransactionType.creditCardPurchase ||
+      _type == TransactionType.chitPayment ||
+      _type == TransactionType.chitReceipt ||
+      _type == TransactionType.loanTaken;
+
   bool get _isRepayment {
+    if (_type == TransactionType.loanRepayment) return true;
     if (_selectedAccount == null) return false;
     if (_selectedAccount!.type == AccountType.debt && _type == TransactionType.debit) {
       return true; // Paying back what I owe
@@ -185,7 +210,7 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // 1. Transaction Type Selector (Debit, Credit, Transfer)
+              // 1. Transaction Type Selector (Debit, Credit, Transfer & Advanced Double-Entry Flow)
               Container(
                 decoration: BoxDecoration(
                   color: Colors.grey.shade100,
@@ -198,7 +223,7 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                       child: _buildTypeButton(
                         label: 'Debit (-)',
                         icon: Icons.arrow_circle_down,
-                        isSelected: !_isTransferMode && _type == TransactionType.debit,
+                        isSelected: !_isTransferMode && (_type == TransactionType.debit || _type == TransactionType.expense),
                         color: AppTheme.debitRed,
                         onTap: () {
                           setState(() {
@@ -213,7 +238,7 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                       child: _buildTypeButton(
                         label: 'Credit (+)',
                         icon: Icons.arrow_circle_up,
-                        isSelected: !_isTransferMode && _type == TransactionType.credit,
+                        isSelected: !_isTransferMode && (_type == TransactionType.credit || _type == TransactionType.income),
                         color: AppTheme.creditGreen,
                         onTap: () {
                           setState(() {
@@ -236,7 +261,7 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                       child: _buildTypeButton(
                         label: 'Transfer (⇄)',
                         icon: Icons.swap_horiz,
-                        isSelected: _isTransferMode,
+                        isSelected: _isTransferMode || _type == TransactionType.transfer,
                         color: AppTheme.transferBlue,
                         onTap: () {
                           setState(() {
@@ -248,6 +273,47 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                     ),
                   ],
                 ),
+              ),
+
+              const SizedBox(height: 12),
+
+              // Accounting Flow Dropdown (Full 12 Double-Entry Types)
+              DropdownButtonFormField<TransactionType>(
+                value: _type,
+                decoration: InputDecoration(
+                  labelText: 'Double-Entry Transaction Flow',
+                  prefixIcon: const Icon(Icons.account_tree, color: AppTheme.emeraldPrimary, size: 20),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                ),
+                items: [
+                  TransactionType.debit,
+                  TransactionType.credit,
+                  TransactionType.transfer,
+                  TransactionType.loanRepayment,
+                  TransactionType.loanTaken,
+                  TransactionType.creditCardPurchase,
+                  TransactionType.creditCardPayment,
+                  TransactionType.chitPayment,
+                  TransactionType.chitReceipt,
+                  TransactionType.assetPurchaseSale,
+                  TransactionType.interestPayment,
+                  TransactionType.adjustment,
+                ].map((t) {
+                  return DropdownMenuItem(
+                    value: t,
+                    child: Text(t.displayName, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
+                  );
+                }).toList(),
+                onChanged: (val) {
+                  if (val != null) {
+                    setState(() {
+                      _type = val;
+                      _isTransferMode = val == TransactionType.transfer;
+                      _recalculateSplit();
+                    });
+                  }
+                },
               ),
 
               const SizedBox(height: 20),
@@ -318,9 +384,9 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
               const SizedBox(height: 20),
 
               // 4. Accounts Selection (Debit & Credit Accounts)
-              if (!_isTransferMode) ...[
+              if (!_requiresTwoAccounts) ...[
                 Text(
-                  _type == TransactionType.debit ? 'Paid From (Debit Account) *' : 'Received In (Credit Account) *',
+                  _type.isOutflow ? 'Paid From (Debit Account) *' : 'Received In (Credit Account) *',
                   style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
                 ),
                 const SizedBox(height: 8),
@@ -339,7 +405,7 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                   onChanged: (val) {
                     setState(() {
                       _selectedAccount = val;
-                      if (val?.type == AccountType.salary && _type == TransactionType.credit) {
+                      if (val?.type == AccountType.salary && _type.isInflow) {
                         if (_counterpartyController.text.isEmpty || _counterpartyController.text == 'Govt Account') {
                           _counterpartyController.text = 'Govt Account';
                         }
@@ -353,7 +419,7 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                 ),
                 const SizedBox(height: 14),
                 Text(
-                  _type == TransactionType.debit
+                  _type.isOutflow
                       ? 'Paid To / Beneficiary (Credit Account / Party)'
                       : 'Received From / Source (Debit Account / Payer)',
                   style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
@@ -362,19 +428,34 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                 TextFormField(
                   controller: _counterpartyController,
                   decoration: InputDecoration(
-                    hintText: _type == TransactionType.debit
+                    hintText: _type.isOutflow
                         ? 'e.g., Vendor, Store, Merchant'
                         : (_selectedAccount?.type == AccountType.salary ? 'Govt Account' : 'e.g., Govt Account, Employer, Client'),
                     prefixIcon: Icon(
-                      _type == TransactionType.debit ? Icons.store : Icons.account_balance,
+                      _type.isOutflow ? Icons.store : Icons.account_balance,
                       color: AppTheme.emeraldPrimary,
                     ),
                     border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                   ),
                 ),
               ] else ...[
-                // Transfer: From (Debit) -> To (Credit)
-                const Text('Transfer From (Debit Account) *', style: TextStyle(fontWeight: FontWeight.bold)),
+                // Dual Account Flow: Source -> Destination
+                Text(
+                  _type == TransactionType.creditCardPurchase
+                      ? 'Credit Card Charged (Liability Source) *'
+                      : _type == TransactionType.creditCardPayment
+                          ? 'Paid From Bank Account (Source) *'
+                          : _type == TransactionType.loanRepayment
+                              ? 'Paid From Bank Account (Source) *'
+                              : _type == TransactionType.loanTaken
+                                  ? 'Borrowed From (Lender / Friend Liability) *'
+                                  : _type == TransactionType.chitPayment
+                                      ? 'Paid From (Funding Source Account) *'
+                                      : _type == TransactionType.chitReceipt
+                                          ? 'Chit Fund Account (Source) *'
+                                          : 'Transfer From (Source Account) *',
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
                 const SizedBox(height: 8),
                 DropdownButtonFormField<Account>(
                   value: _selectedAccount,
@@ -385,13 +466,31 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                   items: accounts.map((acc) {
                     return DropdownMenuItem(
                       value: acc,
-                      child: Text(acc.name),
+                      child: Text('${acc.name} (${acc.category.displayName})'),
                     );
                   }).toList(),
-                  onChanged: (val) => setState(() => _selectedAccount = val),
+                  onChanged: (val) => setState(() {
+                    _selectedAccount = val;
+                    _recalculateSplit();
+                  }),
                 ),
                 const SizedBox(height: 16),
-                const Text('Transfer To (Credit Account) *', style: TextStyle(fontWeight: FontWeight.bold)),
+                Text(
+                  _type == TransactionType.creditCardPurchase
+                      ? 'Expense Category / Account (Destination) *'
+                      : _type == TransactionType.creditCardPayment
+                          ? 'Paid To Credit Card (Destination) *'
+                          : _type == TransactionType.loanRepayment
+                              ? 'Loan Account (Liability Destination) *'
+                              : _type == TransactionType.loanTaken
+                                  ? 'Received In (Bank / Cash Destination) *'
+                                  : _type == TransactionType.chitPayment
+                                      ? 'Chit Fund Account (Destination) *'
+                                      : _type == TransactionType.chitReceipt
+                                          ? 'Deposit To (Bank / Cash Destination) *'
+                                          : 'Transfer To (Destination Account) *',
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
                 const SizedBox(height: 8),
                 DropdownButtonFormField<Account>(
                   value: _destinationAccount,
@@ -402,12 +501,15 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                   items: accounts.where((a) => a.id != _selectedAccount?.id).map((acc) {
                     return DropdownMenuItem(
                       value: acc,
-                      child: Text(acc.name),
+                      child: Text('${acc.name} (${acc.category.displayName})'),
                     );
                   }).toList(),
-                  onChanged: (val) => setState(() => _destinationAccount = val),
+                  onChanged: (val) => setState(() {
+                    _destinationAccount = val;
+                    _recalculateSplit();
+                  }),
                   validator: (val) {
-                    if (_isTransferMode && val == null) return 'Please choose a destination account';
+                    if (_requiresTwoAccounts && val == null) return 'Please choose a destination account';
                     return null;
                   },
                 ),
@@ -688,6 +790,80 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                 ),
               ),
 
+              const SizedBox(height: 16),
+
+              // 7c. Additional Details Accordion (Bill No, Person/Friend, Chit Group, Reference)
+              Card(
+                elevation: 0.5,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  side: BorderSide(color: Colors.grey.shade300),
+                ),
+                child: Theme(
+                  data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+                  child: ExpansionTile(
+                    leading: const Icon(Icons.more_horiz, color: AppTheme.emeraldPrimary),
+                    title: const Text(
+                      'Additional Audit & Reference Details',
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                    ),
+                    subtitle: const Text(
+                      'Bill number, lender/friend, chit group, or reference details',
+                      style: TextStyle(fontSize: 11),
+                    ),
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        child: Column(
+                          children: [
+                            TextFormField(
+                              controller: _billNumberController,
+                              decoration: const InputDecoration(
+                                labelText: 'Bill / Invoice Number',
+                                hintText: 'e.g., INV-2026-001',
+                                prefixIcon: Icon(Icons.receipt, size: 18),
+                                border: OutlineInputBorder(),
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            TextFormField(
+                              controller: _personNameController,
+                              decoration: const InputDecoration(
+                                labelText: 'Lender / Friend / Beneficiary Name',
+                                hintText: 'e.g., Friend A, Ramesh, Landlord',
+                                prefixIcon: Icon(Icons.person, size: 18),
+                                border: OutlineInputBorder(),
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            TextFormField(
+                              controller: _chitGroupController,
+                              decoration: const InputDecoration(
+                                labelText: 'Chit Group / Auction Name',
+                                hintText: 'e.g., Gold Chits Group A',
+                                prefixIcon: Icon(Icons.groups, size: 18),
+                                border: OutlineInputBorder(),
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            TextFormField(
+                              controller: _referenceNumberController,
+                              decoration: const InputDecoration(
+                                labelText: 'External Reference / UTR / Cheque No.',
+                                hintText: 'e.g., UTR1234567890',
+                                prefixIcon: Icon(Icons.tag, size: 18),
+                                border: OutlineInputBorder(),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+
               const SizedBox(height: 32),
 
               // 8. Submit / Save Button
@@ -776,9 +952,37 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
     final principalPortion = double.tryParse(_principalPortionController.text.trim()) ?? 0.0;
     final interestPortion = double.tryParse(_interestPortionController.text.trim()) ?? 0.0;
 
+    String? debitName;
+    String? creditName;
+
+    if (_requiresTwoAccounts) {
+      if (_type == TransactionType.creditCardPurchase) {
+        debitName = _destinationAccount?.name ?? 'Expense';
+        creditName = _selectedAccount!.name;
+      } else if (_type == TransactionType.loanTaken) {
+        debitName = _destinationAccount?.name ?? 'Bank/Cash';
+        creditName = _selectedAccount!.name;
+      } else {
+        debitName = _selectedAccount!.name;
+        creditName = _destinationAccount?.name ?? 'Account';
+      }
+    } else {
+      if (_type.isOutflow) {
+        debitName = _selectedAccount!.name;
+        creditName = _counterpartyController.text.trim().isNotEmpty
+            ? _counterpartyController.text.trim()
+            : 'Expenditure';
+      } else {
+        debitName = _counterpartyController.text.trim().isNotEmpty
+            ? _counterpartyController.text.trim()
+            : (_selectedAccount?.type == AccountType.salary ? 'Govt Account' : 'External Payer');
+        creditName = _selectedAccount!.name;
+      }
+    }
+
     final tx = TransactionModel(
       accountId: _selectedAccount!.id!,
-      toAccountId: _isTransferMode ? _destinationAccount?.id : null,
+      toAccountId: _requiresTwoAccounts ? _destinationAccount?.id : null,
       type: _isTransferMode ? TransactionType.transfer : _type,
       amount: amount,
       principalPortion: principalPortion,
@@ -789,18 +993,12 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
       paymentMode: _paymentMode,
       otherPaymentModeDetails: _paymentMode == 'Others' ? _otherModeController.text.trim() : null,
       receiptPath: _receiptPath,
-      debitAccountName: _isTransferMode
-          ? _selectedAccount!.name
-          : (_type == TransactionType.debit
-              ? _selectedAccount!.name
-              : (_counterpartyController.text.trim().isNotEmpty
-                  ? _counterpartyController.text.trim()
-                  : (_selectedAccount?.type == AccountType.salary ? 'Govt Account' : 'External Payer'))),
-      creditAccountName: _isTransferMode
-          ? _destinationAccount?.name
-          : (_type == TransactionType.credit
-              ? _selectedAccount!.name
-              : (_counterpartyController.text.trim().isNotEmpty ? _counterpartyController.text.trim() : 'Expenditure')),
+      debitAccountName: debitName,
+      creditAccountName: creditName,
+      billNumber: _billNumberController.text.trim().isNotEmpty ? _billNumberController.text.trim() : null,
+      personName: _personNameController.text.trim().isNotEmpty ? _personNameController.text.trim() : null,
+      chitGroupName: _chitGroupController.text.trim().isNotEmpty ? _chitGroupController.text.trim() : null,
+      referenceNumber: _referenceNumberController.text.trim().isNotEmpty ? _referenceNumberController.text.trim() : null,
     );
 
     final txId = await context.read<FinanceProvider>().addTransaction(tx);
@@ -892,9 +1090,37 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
     final principalPortion = double.tryParse(_principalPortionController.text.trim()) ?? 0.0;
     final interestPortion = double.tryParse(_interestPortionController.text.trim()) ?? 0.0;
 
+    String? debitName;
+    String? creditName;
+
+    if (_requiresTwoAccounts) {
+      if (_type == TransactionType.creditCardPurchase) {
+        debitName = _destinationAccount?.name ?? 'Expense';
+        creditName = _selectedAccount!.name;
+      } else if (_type == TransactionType.loanTaken) {
+        debitName = _destinationAccount?.name ?? 'Bank/Cash';
+        creditName = _selectedAccount!.name;
+      } else {
+        debitName = _selectedAccount!.name;
+        creditName = _destinationAccount?.name ?? 'Account';
+      }
+    } else {
+      if (_type.isOutflow) {
+        debitName = _selectedAccount!.name;
+        creditName = _counterpartyController.text.trim().isNotEmpty
+            ? _counterpartyController.text.trim()
+            : 'Expenditure';
+      } else {
+        debitName = _counterpartyController.text.trim().isNotEmpty
+            ? _counterpartyController.text.trim()
+            : (_selectedAccount?.type == AccountType.salary ? 'Govt Account' : 'External Payer');
+        creditName = _selectedAccount!.name;
+      }
+    }
+
     final updatedTx = widget.transactionToEdit!.copyWith(
       accountId: _selectedAccount!.id!,
-      toAccountId: _isTransferMode ? _destinationAccount?.id : null,
+      toAccountId: _requiresTwoAccounts ? _destinationAccount?.id : null,
       type: _isTransferMode ? TransactionType.transfer : _type,
       amount: amount,
       principalPortion: principalPortion,
@@ -905,18 +1131,12 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
       paymentMode: _paymentMode,
       otherPaymentModeDetails: _paymentMode == 'Others' ? _otherModeController.text.trim() : null,
       receiptPath: _receiptPath,
-      debitAccountName: _isTransferMode
-          ? _selectedAccount!.name
-          : (_type == TransactionType.debit
-              ? _selectedAccount!.name
-              : (_counterpartyController.text.trim().isNotEmpty
-                  ? _counterpartyController.text.trim()
-                  : (_selectedAccount?.type == AccountType.salary ? 'Govt Account' : 'External Payer'))),
-      creditAccountName: _isTransferMode
-          ? _destinationAccount?.name
-          : (_type == TransactionType.credit
-              ? _selectedAccount!.name
-              : (_counterpartyController.text.trim().isNotEmpty ? _counterpartyController.text.trim() : 'Expenditure')),
+      debitAccountName: debitName,
+      creditAccountName: creditName,
+      billNumber: _billNumberController.text.trim().isNotEmpty ? _billNumberController.text.trim() : null,
+      personName: _personNameController.text.trim().isNotEmpty ? _personNameController.text.trim() : null,
+      chitGroupName: _chitGroupController.text.trim().isNotEmpty ? _chitGroupController.text.trim() : null,
+      referenceNumber: _referenceNumberController.text.trim().isNotEmpty ? _referenceNumberController.text.trim() : null,
     );
 
     final success = await context.read<FinanceProvider>().updateTransaction(updatedTx, reason: reason);

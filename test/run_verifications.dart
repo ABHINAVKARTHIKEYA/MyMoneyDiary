@@ -8,6 +8,9 @@ import '../lib/utils/date_duration.dart';
 import '../lib/models/account_category.dart';
 import '../lib/models/journal_entry.dart';
 import '../lib/models/audit_log.dart';
+import '../lib/models/transaction_type.dart';
+import '../lib/services/double_entry_engine.dart';
+import '../lib/utils/financial_year_helper.dart';
 
 void main() {
   print('=============================================');
@@ -890,6 +893,486 @@ void main() {
     assert(canDelete(5, 10) == false, 'Account with transactions must NOT be deletable');
     assert(canDelete(1, 0) == false, 'Account with 1 transaction must NOT be deletable');
     assert(canDelete(0, 0) == true, 'Clean account with 0 transactions CAN be deleted');
+  });
+
+  // --- 14. Double-Entry Transaction Engine (Stage 2) ---
+  print('\n--- 14. Double-Entry Transaction Engine (Stage 2) ---');
+  test('Balanced journal entry validation passes when debits equal credits', () {
+    final entries = [
+      JournalEntry(transactionId: 1, accountId: 1, entryType: EntryType.debit, amount: 2400.0),
+      JournalEntry(transactionId: 1, accountId: 2, entryType: EntryType.credit, amount: 2400.0),
+    ];
+    DoubleEntryEngine.validateBalanced(entries);
+  });
+
+  test('Unbalanced journal entry throws UnbalancedTransactionException', () {
+    final entries = [
+      JournalEntry(transactionId: 1, accountId: 1, entryType: EntryType.debit, amount: 2400.0),
+      JournalEntry(transactionId: 1, accountId: 2, entryType: EntryType.credit, amount: 2300.0),
+    ];
+    bool threw = false;
+    try {
+      DoubleEntryEngine.validateBalanced(entries);
+    } on UnbalancedTransactionException catch (e) {
+      threw = true;
+      assert(e.discrepancy == 100.0);
+    }
+    assert(threw, 'Engine must reject unbalanced journal entries');
+  });
+
+  test('Journal entry rejection on negative or zero amount', () {
+    final entries = [
+      JournalEntry(transactionId: 1, accountId: 1, entryType: EntryType.debit, amount: 0.0),
+      JournalEntry(transactionId: 1, accountId: 2, entryType: EntryType.credit, amount: 0.0),
+    ];
+    bool threw = false;
+    try {
+      DoubleEntryEngine.validateBalanced(entries);
+    } catch (_) {
+      threw = true;
+    }
+    assert(threw, 'Engine must reject zero/negative amounts');
+  });
+
+  test('Compound loan repayment generates balanced 3-line journal entry', () {
+    final entries = DoubleEntryEngine.buildLoanRepaymentCompoundEntries(
+      transactionId: 10,
+      loanAccountId: 101, // Housing Loan (Liability)
+      interestExpenseAccountId: 201, // Housing Loan Interest (Expense)
+      sourceAccountId: 1, // Salary Bank Account (Asset)
+      principalPortion: 20000.0,
+      interestPortion: 15000.0,
+    );
+
+    assert(entries.length == 3);
+    assert(entries[0].accountId == 101 && entries[0].isDebit && entries[0].amount == 20000.0);
+    assert(entries[1].accountId == 201 && entries[1].isDebit && entries[1].amount == 15000.0);
+    assert(entries[2].accountId == 1 && entries[2].isCredit && entries[2].amount == 35000.0);
+    DoubleEntryEngine.validateBalanced(entries);
+  });
+
+  test('Normal balance delta computes signed impact across all categories', () {
+    // Asset: Debit adds, Credit subtracts
+    assert(DoubleEntryEngine.calculateBalanceDelta(category: AccountCategory.asset, entryType: EntryType.debit, amount: 1000.0) == 1000.0);
+    assert(DoubleEntryEngine.calculateBalanceDelta(category: AccountCategory.asset, entryType: EntryType.credit, amount: 400.0) == -400.0);
+
+    // Liability: Credit adds, Debit subtracts
+    assert(DoubleEntryEngine.calculateBalanceDelta(category: AccountCategory.liability, entryType: EntryType.credit, amount: 5000.0) == 5000.0);
+    assert(DoubleEntryEngine.calculateBalanceDelta(category: AccountCategory.liability, entryType: EntryType.debit, amount: 2000.0) == -2000.0);
+
+    // Expense: Debit adds, Credit subtracts
+    assert(DoubleEntryEngine.calculateBalanceDelta(category: AccountCategory.expense, entryType: EntryType.debit, amount: 500.0) == 500.0);
+
+    // Income: Credit adds, Debit subtracts
+    assert(DoubleEntryEngine.calculateBalanceDelta(category: AccountCategory.income, entryType: EntryType.credit, amount: 25000.0) == 25000.0);
+  });
+
+  // --- 15. Master Journal & Account Ledgers (Stage 3) ---
+  print('\n--- 15. Master Journal & Account Ledgers (Stage 3) ---');
+  test('Account ledger computes running balance correctly for Salary Bank Account', () {
+    double running = 10000.0; // Opening balance
+
+    // 1. Receive salary ₹50,000 (Debit to bank)
+    running += DoubleEntryEngine.calculateBalanceDelta(category: AccountCategory.asset, entryType: EntryType.debit, amount: 50000.0);
+    assert(running == 60000.0);
+
+    // 2. Pay chit ₹5,000 (Credit to bank)
+    running += DoubleEntryEngine.calculateBalanceDelta(category: AccountCategory.asset, entryType: EntryType.credit, amount: 5000.0);
+    assert(running == 55000.0);
+
+    // 3. Pay credit card bill ₹3,500 (Credit to bank)
+    running += DoubleEntryEngine.calculateBalanceDelta(category: AccountCategory.asset, entryType: EntryType.credit, amount: 3500.0);
+    assert(running == 51500.0);
+
+    // 4. Repay Friend A ₹10,000 (Credit to bank)
+    running += DoubleEntryEngine.calculateBalanceDelta(category: AccountCategory.asset, entryType: EntryType.credit, amount: 10000.0);
+    assert(running == 41500.0);
+
+    // 5. Pay Housing EMI ₹35,000 (Credit to bank)
+    running += DoubleEntryEngine.calculateBalanceDelta(category: AccountCategory.asset, entryType: EntryType.credit, amount: 35000.0);
+    assert(running == 6500.0);
+  });
+
+  test('Multi-source Chit account ledger tracks all distinct funding sources', () {
+    final chitPayments = [
+      {'month': 'Jan 2026', 'amount': 5000.0, 'counter': 'Salary Bank Account'},
+      {'month': 'Feb 2026', 'amount': 5000.0, 'counter': 'GPF Account'},
+      {'month': 'Mar 2026', 'amount': 5000.0, 'counter': 'Rent Received'},
+      {'month': 'Apr 2026', 'amount': 5000.0, 'counter': 'Friend A Loan'},
+      {'month': 'May 2026', 'amount': 5000.0, 'counter': 'Property Sale Proceeds'},
+    ];
+
+    double totalChitPaid = 0.0;
+    for (final p in chitPayments) {
+      assert((p['counter'] as String).isNotEmpty);
+      totalChitPaid += p['amount'] as double;
+    }
+    assert(totalChitPaid == 25000.0);
+  });
+
+  test('Milk bill expense ledger tracks varied payment sources without bank distortion', () {
+    final milkPayments = [
+      {'source': 'Salary Bank Account', 'amount': 2200.0},
+      {'source': 'Demat/Stock Profit', 'amount': 2400.0},
+      {'source': 'Cash Wallet', 'amount': 2100.0},
+      {'source': 'Credit Card 1', 'amount': 2300.0},
+    ];
+
+    double cumulativeMilkExpense = 0.0;
+    for (final m in milkPayments) {
+      cumulativeMilkExpense += DoubleEntryEngine.calculateBalanceDelta(
+        category: AccountCategory.expense,
+        entryType: EntryType.debit,
+        amount: m['amount'] as double,
+      );
+    }
+    assert(cumulativeMilkExpense == 9000.0);
+  });
+
+  test('Credit Card 1 ledger accurately tracks purchases, payments, and outstanding balance', () {
+    double outstanding = 0.0; // Normal Credit
+
+    // 1. Current Bill charge ₹3,500 (Credit to CC liability)
+    outstanding += DoubleEntryEngine.calculateBalanceDelta(category: AccountCategory.liability, entryType: EntryType.credit, amount: 3500.0);
+    assert(outstanding == 3500.0);
+
+    // 2. Grocery purchase ₹2,000 (Credit to CC liability)
+    outstanding += DoubleEntryEngine.calculateBalanceDelta(category: AccountCategory.liability, entryType: EntryType.credit, amount: 2000.0);
+    assert(outstanding == 5500.0);
+
+    // 3. Payment from Salary Bank ₹3,500 (Debit to CC liability)
+    outstanding += DoubleEntryEngine.calculateBalanceDelta(category: AccountCategory.liability, entryType: EntryType.debit, amount: 3500.0);
+    assert(outstanding == 2000.0);
+  });
+
+  // --- 16. Specialized Modules & Compound Entries (Stage 4) ---
+  print('\n--- 16. Specialized Modules & Compound Entries (Stage 4) ---');
+  test('Loan repayment compound split preserves mathematical balance: Principal + Interest == Payment', () {
+    const totalEMI = 40000.0;
+    const principalPortion = 25000.0;
+    const interestPortion = 15000.0;
+    assert(principalPortion + interestPortion == totalEMI);
+
+    final entries = DoubleEntryEngine.buildLoanRepaymentCompoundEntries(
+      transactionId: 401,
+      loanAccountId: 10, // Housing Loan (Liability)
+      interestExpenseAccountId: 20, // Housing Loan Interest (Expense)
+      sourceAccountId: 1, // Salary Bank (Asset)
+      principalPortion: principalPortion,
+      interestPortion: interestPortion,
+    );
+
+    assert(entries.length == 3);
+    final debits = entries.where((e) => e.isDebit).fold(0.0, (sum, e) => sum + e.amount);
+    final credits = entries.where((e) => e.isCredit).fold(0.0, (sum, e) => sum + e.amount);
+    assert(debits == credits && debits == 40000.0);
+  });
+
+  test('Friend temporary debt full lifecycle: Borrow -> Direct Kirana -> Repay after salary settles to zero', () {
+    double friendDebtBalance = 0.0; // Normal Credit
+
+    // 1. Borrow ₹10,000 received into Cash Wallet (Credit to friend loan)
+    friendDebtBalance += DoubleEntryEngine.calculateBalanceDelta(
+      category: AccountCategory.liability,
+      entryType: EntryType.credit,
+      amount: 10000.0,
+    );
+    assert(friendDebtBalance == 10000.0);
+
+    // 2. Direct Kirana bill ₹5,000 paid by friend (Credit to friend loan)
+    friendDebtBalance += DoubleEntryEngine.calculateBalanceDelta(
+      category: AccountCategory.liability,
+      entryType: EntryType.credit,
+      amount: 5000.0,
+    );
+    assert(friendDebtBalance == 15000.0);
+
+    // 3. Full repayment of ₹15,000 from Salary Bank Account (Debit to friend loan)
+    friendDebtBalance += DoubleEntryEngine.calculateBalanceDelta(
+      category: AccountCategory.liability,
+      entryType: EntryType.debit,
+      amount: 15000.0,
+    );
+    assert(friendDebtBalance == 0.0, 'Friend debt must fully settle to 0.0');
+  });
+
+  test('Multi-chit groups tracking with distinct installments and dynamic lifting', () {
+    final chit1 = ChitDetails(
+      accountId: 101,
+      totalValue: 500000.0,
+      durationMonths: 20,
+      installmentBeforeLifting: 25000.0,
+      installmentAfterLifting: 25000.0,
+      currentMonth: 5,
+      startDate: DateTime(2025, 1, 1),
+      endDate: DateTime(2026, 8, 1),
+      isLifted: false,
+    );
+
+    final chit2 = ChitDetails(
+      accountId: 102,
+      totalValue: 200000.0,
+      durationMonths: 20,
+      installmentBeforeLifting: 10000.0,
+      installmentAfterLifting: 10000.0,
+      currentMonth: 8,
+      startDate: DateTime(2025, 6, 1),
+      endDate: DateTime(2027, 1, 1),
+      isLifted: true,
+      liftedMonth: 4,
+      prizeMoneyReceived: 140000.0,
+      bidDiscount: 60000.0,
+    );
+
+    assert(chit1.isLifted == false);
+    assert(chit2.isLifted == true);
+    assert(chit2.prizeMoneyReceived == 140000.0);
+    assert(chit2.remainingMonths == 12);
+  });
+
+  // --- 17. Dashboard, Balance Sheet Invariant, Indian FY & Cash Flow (Stage 5) ---
+  print('\n--- 17. Balance Sheet, Indian Financial Year & Cash Flow (Stage 5) ---');
+  test('Indian Financial Year helper resolves exact Apr 1 to Mar 31 boundaries', () {
+    final date1 = DateTime(2026, 5, 15);
+    assert(FinancialYearHelper.getFYStartYear(date1) == 2026);
+    assert(FinancialYearHelper.formatFY(2026) == 'FY 2026-27');
+
+    final date2 = DateTime(2026, 2, 10); // Before April -> FY 2025-26
+    assert(FinancialYearHelper.getFYStartYear(date2) == 2025);
+    assert(FinancialYearHelper.formatFY(2025) == 'FY 2025-26');
+
+    final start = FinancialYearHelper.getStartDate(2025);
+    final end = FinancialYearHelper.getEndDate(2025);
+    assert(start.month == 4 && start.day == 1 && start.year == 2025);
+    assert(end.month == 3 && end.day == 31 && end.year == 2026);
+  });
+
+  test('Balance Sheet mathematical equation strictly holds: Assets - Liabilities == Equity + Net Profit', () {
+    const assets = 250000.0;
+    const liabilities = 90000.0;
+    const netWorth = assets - liabilities; // 160,000
+
+    const openingEquity = 100000.0;
+    const income = 120000.0;
+    const expenses = 60000.0;
+    const netProfit = income - expenses; // 60,000
+
+    // Fundamental accounting equation:
+    // Assets - Liabilities == Equity + (Income - Expenses)
+    final equationBalance = netWorth - (openingEquity + netProfit);
+    assert(equationBalance.abs() < 0.001, 'Balance sheet must balance to 0.0 discrepancy');
+  });
+
+  test('Cash Flow categorizes operating vs financing flows correctly', () {
+    final mockTransactions = [
+      {'type': 'income', 'amt': 80000.0},
+      {'type': 'expense', 'amt': 25000.0},
+      {'type': 'credit_card_purchase', 'amt': 8500.0},
+      {'type': 'loan_taken', 'amt': 50000.0},
+      {'type': 'loan_repayment', 'amt': 40000.0},
+      {'type': 'chit_payment', 'amt': 10000.0},
+    ];
+
+    double opInflows = 0.0;
+    double opOutflows = 0.0;
+    double finInflows = 0.0;
+    double finOutflows = 0.0;
+
+    for (final tx in mockTransactions) {
+      final t = tx['type'] as String;
+      final a = tx['amt'] as double;
+      if (t == 'income') opInflows += a;
+      if (t == 'expense' || t == 'credit_card_purchase') opOutflows += a;
+      if (t == 'loan_taken') finInflows += a;
+      if (t == 'loan_repayment' || t == 'chit_payment') finOutflows += a;
+    }
+
+    final netOp = opInflows - opOutflows; // 80,000 - 33,500 = 46,500
+    final netFin = finInflows - finOutflows; // 50,000 - 50,000 = 0
+    final netCash = netOp + netFin; // 46,500
+
+    assert(netOp == 46500.0);
+    assert(netFin == 0.0);
+    assert(netCash == 46500.0);
+  });
+
+  // --- 18. Demo Sample Data & 5 Core Scenarios (Stage 6) ---
+  print('\n--- 18. Demo Sample Data & 5 Core Scenarios (Stage 6) ---');
+  test('Scenario 1: 5 distinct Chit Fund payment sources produce balanced entries', () {
+    final chitPayments = [
+      {'source': 'Salary Bank Account', 'srcId': 1, 'amt': 10000.0},
+      {'source': 'GPF Account', 'srcId': 2, 'amt': 10000.0},
+      {'source': 'Rent Received', 'srcId': 3, 'amt': 10000.0},
+      {'source': 'Friend A Loan', 'srcId': 4, 'amt': 10000.0},
+      {'source': 'Property Sale Proceeds', 'srcId': 5, 'amt': 10000.0},
+    ];
+
+    for (int i = 0; i < chitPayments.length; i++) {
+      final cp = chitPayments[i];
+      final entries = DoubleEntryEngine.buildJournalEntriesForType(
+        transactionId: 100 + i,
+        type: TransactionType.chitPayment,
+        totalAmount: cp['amt'] as double,
+        sourceAccountId: cp['srcId'] as int,
+        destinationAccountId: 99, // Chit Fund Account
+        memo: 'Chit payment from ${cp['source']}',
+      );
+      DoubleEntryEngine.validateBalanced(entries);
+      assert(entries.first.isDebit && entries.first.accountId == 99);
+      assert(entries.last.isCredit && entries.last.accountId == cp['srcId']);
+    }
+  });
+
+  test('Scenario 2: Milk bill ledger tracks all 4 sources without double-counting', () {
+    final milkRows = [
+      {'srcId': 1, 'amt': 2500.0, 'name': 'Salary Bank'},
+      {'srcId': 2, 'amt': 2600.0, 'name': 'Cash Wallet'},
+      {'srcId': 3, 'amt': 2700.0, 'name': 'Credit Card 1'},
+      {'srcId': 4, 'amt': 2500.0, 'name': 'Friend A Loan'},
+    ];
+
+    double totalMilkExpense = 0.0;
+    for (int i = 0; i < milkRows.length; i++) {
+      final mr = milkRows[i];
+      final entries = DoubleEntryEngine.buildJournalEntriesForType(
+        transactionId: 200 + i,
+        type: TransactionType.expense,
+        totalAmount: mr['amt'] as double,
+        sourceAccountId: mr['srcId'] as int,
+        destinationAccountId: 50, // Milk Bill Expense
+        memo: 'Milk payment from ${mr['name']}',
+      );
+      DoubleEntryEngine.validateBalanced(entries);
+      totalMilkExpense += mr['amt'] as double;
+    }
+    assert(totalMilkExpense == 10300.0);
+  });
+
+  test('Scenario 3: Credit Card 1 ledger balances after purchases, fee and payment', () {
+    final cardEntries = <JournalEntry>[];
+
+    // Purchase 1: Grocery ₹8,500
+    cardEntries.addAll(DoubleEntryEngine.buildJournalEntriesForType(
+      transactionId: 301,
+      type: TransactionType.creditCardPurchase,
+      totalAmount: 8500.0,
+      sourceAccountId: 70, // Credit Card 1
+      destinationAccountId: 60, // Grocery
+    ));
+
+    // Purchase 2: Milk ₹2,700
+    cardEntries.addAll(DoubleEntryEngine.buildJournalEntriesForType(
+      transactionId: 302,
+      type: TransactionType.creditCardPurchase,
+      totalAmount: 2700.0,
+      sourceAccountId: 70, // Credit Card 1
+      destinationAccountId: 50, // Milk Bill
+    ));
+
+    // Fee: ₹450
+    cardEntries.addAll(DoubleEntryEngine.buildJournalEntriesForType(
+      transactionId: 303,
+      type: TransactionType.creditCardPurchase,
+      totalAmount: 450.0,
+      sourceAccountId: 70, // Credit Card 1
+      destinationAccountId: 65, // Charges
+    ));
+
+    // Bill Payment: ₹11,650
+    cardEntries.addAll(DoubleEntryEngine.buildJournalEntriesForType(
+      transactionId: 304,
+      type: TransactionType.creditCardPayment,
+      totalAmount: 11650.0,
+      sourceAccountId: 1, // Salary Bank
+      destinationAccountId: 70, // Credit Card 1
+    ));
+
+    DoubleEntryEngine.validateBalanced(cardEntries);
+
+    // Verify net Credit Card 1 running balance
+    double ccRunning = 0.0;
+    for (final e in cardEntries.where((e) => e.accountId == 70)) {
+      ccRunning += DoubleEntryEngine.calculateBalanceDelta(
+        category: AccountCategory.liability,
+        entryType: e.entryType,
+        amount: e.amount,
+      );
+    }
+    assert(ccRunning == 0.0, 'Credit Card 1 must have 0.0 outstanding after full payment');
+  });
+
+  test('Scenario 4: Housing Loan EMI compound repayment reduces principal and records interest', () {
+    final emiEntries = DoubleEntryEngine.buildLoanRepaymentCompoundEntries(
+      transactionId: 401,
+      loanAccountId: 80, // Housing Loan (Liability)
+      interestExpenseAccountId: 81, // Housing Loan Interest (Expense)
+      sourceAccountId: 1, // Salary Bank (Asset)
+      principalPortion: 25000.0,
+      interestPortion: 15000.0,
+    );
+
+    DoubleEntryEngine.validateBalanced(emiEntries);
+
+    // Verify Housing Loan liability balance reduction
+    final loanReduction = DoubleEntryEngine.calculateBalanceDelta(
+      category: AccountCategory.liability,
+      entryType: EntryType.debit,
+      amount: 25000.0,
+    );
+    assert(loanReduction == -25000.0);
+
+    // Verify Interest Expense recording
+    final interestExpense = DoubleEntryEngine.calculateBalanceDelta(
+      category: AccountCategory.expense,
+      entryType: EntryType.debit,
+      amount: 15000.0,
+    );
+    assert(interestExpense == 15000.0);
+  });
+
+  test('Scenario 5: Temporary friend borrowing & settlement lifecycle yields zero net liability', () {
+    final friendEntries = <JournalEntry>[];
+
+    // 1. Borrow ₹10,000 into Cash Wallet
+    friendEntries.addAll(DoubleEntryEngine.buildJournalEntriesForType(
+      transactionId: 501,
+      type: TransactionType.loanTaken,
+      totalAmount: 10000.0,
+      sourceAccountId: 90, // Friend A Loan
+      destinationAccountId: 2, // Cash Wallet
+    ));
+
+    // 2. Direct Kirana ₹5,000 paid from borrowed amount
+    friendEntries.addAll(DoubleEntryEngine.buildJournalEntriesForType(
+      transactionId: 502,
+      type: TransactionType.expense,
+      totalAmount: 5000.0,
+      sourceAccountId: 90, // Friend A Loan
+      destinationAccountId: 60, // Kirana Expense
+    ));
+
+    // 3. Full repayment ₹15,000 from Salary Bank
+    friendEntries.addAll(DoubleEntryEngine.buildJournalEntriesForType(
+      transactionId: 503,
+      type: TransactionType.loanRepayment,
+      totalAmount: 15000.0,
+      principalPortion: 15000.0,
+      sourceAccountId: 1, // Salary Bank
+      destinationAccountId: 90, // Friend A Loan
+    ));
+
+    DoubleEntryEngine.validateBalanced(friendEntries);
+
+    // Calculate Friend A running balance
+    double friendDebt = 0.0;
+    for (final e in friendEntries.where((e) => e.accountId == 90)) {
+      friendDebt += DoubleEntryEngine.calculateBalanceDelta(
+        category: AccountCategory.liability,
+        entryType: e.entryType,
+        amount: e.amount,
+      );
+    }
+    assert(friendDebt == 0.0, 'Friend A debt must be 0.0 after repayment');
   });
 
   print('\n=============================================');

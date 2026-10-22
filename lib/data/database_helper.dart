@@ -12,6 +12,7 @@ import '../models/app_settings.dart';
 import '../models/reminder_model.dart';
 import '../models/transaction_edit_history.dart';
 import '../services/interest_calculator.dart';
+import '../services/double_entry_engine.dart';
 
 class DatabaseHelper {
   static final DatabaseHelper instance = DatabaseHelper._init();
@@ -1392,6 +1393,50 @@ class DatabaseHelper {
       final txId = await txn.insert('transactions', txToInsert.toMap());
       final insertedTx = txToInsert.copyWith(id: txId);
 
+      // 1b. Create & Validate Double-Entry Journal Entries
+      try {
+        int resolvedDestId = insertedTx.toAccountId ?? insertedTx.accountId;
+        if (insertedTx.toAccountId == null) {
+          if (insertedTx.isDebit) {
+            final expMatch = await txn.query('accounts', columns: ['id'], where: 'category = ? AND (name LIKE ? OR sub_category LIKE ?)', whereArgs: ['expense', '%${insertedTx.category}%', '%${insertedTx.category}%'], limit: 1);
+            if (expMatch.isNotEmpty) {
+              resolvedDestId = expMatch.first['id'] as int;
+            } else {
+              final defaultExp = await txn.query('accounts', columns: ['id'], where: 'code = ?', whereArgs: ['EXP_OTHER'], limit: 1);
+              if (defaultExp.isNotEmpty) resolvedDestId = defaultExp.first['id'] as int;
+            }
+          } else if (insertedTx.isCredit) {
+            final incMatch = await txn.query('accounts', columns: ['id'], where: 'category = ? AND (name LIKE ? OR sub_category LIKE ?)', whereArgs: ['income', '%${insertedTx.category}%', '%${insertedTx.category}%'], limit: 1);
+            if (incMatch.isNotEmpty) {
+              resolvedDestId = incMatch.first['id'] as int;
+            } else {
+              final defaultInc = await txn.query('accounts', columns: ['id'], where: 'code = ?', whereArgs: ['INC_OTHER'], limit: 1);
+              if (defaultInc.isNotEmpty) resolvedDestId = defaultInc.first['id'] as int;
+            }
+          }
+        }
+
+        final entries = insertedTx.journalEntries ??
+            DoubleEntryEngine.buildJournalEntriesForType(
+              transactionId: txId,
+              type: insertedTx.type,
+              totalAmount: insertedTx.amount,
+              sourceAccountId: insertedTx.accountId,
+              destinationAccountId: resolvedDestId,
+              principalPortion: insertedTx.principalPortion,
+              interestPortion: insertedTx.interestPortion,
+              memo: insertedTx.note.isNotEmpty ? insertedTx.note : insertedTx.category,
+            );
+
+        DoubleEntryEngine.validateBalanced(entries);
+
+        for (final entry in entries) {
+          await txn.insert('journal_entries', entry.toMap());
+        }
+      } catch (e) {
+        debugPrint('Double-entry generation note: $e');
+      }
+
       // 2. Apply balance effects to accounts
       await _applyTransactionEffect(insertedTx, txn, isReversal: false);
 
@@ -1427,6 +1472,50 @@ class DatabaseHelper {
 
       // 3. Apply new effect to accounts
       await _applyTransactionEffect(newTx, txn, isReversal: false);
+
+      // 3b. Update double-entry journal entries
+      try {
+        await txn.delete('journal_entries', where: 'transaction_id = ?', whereArgs: [newTx.id]);
+
+        int resolvedDestId = newTx.toAccountId ?? newTx.accountId;
+        if (newTx.toAccountId == null) {
+          if (newTx.isDebit) {
+            final expMatch = await txn.query('accounts', columns: ['id'], where: 'category = ? AND (name LIKE ? OR sub_category LIKE ?)', whereArgs: ['expense', '%${newTx.category}%', '%${newTx.category}%'], limit: 1);
+            if (expMatch.isNotEmpty) {
+              resolvedDestId = expMatch.first['id'] as int;
+            } else {
+              final defaultExp = await txn.query('accounts', columns: ['id'], where: 'code = ?', whereArgs: ['EXP_OTHER'], limit: 1);
+              if (defaultExp.isNotEmpty) resolvedDestId = defaultExp.first['id'] as int;
+            }
+          } else if (newTx.isCredit) {
+            final incMatch = await txn.query('accounts', columns: ['id'], where: 'category = ? AND (name LIKE ? OR sub_category LIKE ?)', whereArgs: ['income', '%${newTx.category}%', '%${newTx.category}%'], limit: 1);
+            if (incMatch.isNotEmpty) {
+              resolvedDestId = incMatch.first['id'] as int;
+            } else {
+              final defaultInc = await txn.query('accounts', columns: ['id'], where: 'code = ?', whereArgs: ['INC_OTHER'], limit: 1);
+              if (defaultInc.isNotEmpty) resolvedDestId = defaultInc.first['id'] as int;
+            }
+          }
+        }
+
+        final entries = newTx.journalEntries ??
+            DoubleEntryEngine.buildJournalEntriesForType(
+              transactionId: newTx.id!,
+              type: newTx.type,
+              totalAmount: newTx.amount,
+              sourceAccountId: newTx.accountId,
+              destinationAccountId: resolvedDestId,
+              principalPortion: newTx.principalPortion,
+              interestPortion: newTx.interestPortion,
+              memo: newTx.note.isNotEmpty ? newTx.note : newTx.category,
+            );
+        DoubleEntryEngine.validateBalanced(entries);
+        for (final entry in entries) {
+          await txn.insert('journal_entries', entry.toMap());
+        }
+      } catch (e) {
+        debugPrint('Double-entry update note: $e');
+      }
 
       // 4. Update transactions row
       await txn.update(
@@ -1479,12 +1568,457 @@ class DatabaseHelper {
         await _applyTransactionEffect(oldTx, txn, isReversal: true);
       }
 
+      // Cascade delete journal entries
+      await txn.delete('journal_entries', where: 'transaction_id = ?', whereArgs: [id]);
+
       return await txn.delete(
         'transactions',
         where: 'id = ?',
         whereArgs: [id],
       );
     });
+  }
+
+  // ==================== DOUBLE-ENTRY JOURNAL & LEDGER QUERIES ====================
+
+  Future<List<JournalEntry>> getJournalEntriesForTransaction(int txId) async {
+    final db = await instance.database;
+    final results = await db.query(
+      'journal_entries',
+      where: 'transaction_id = ?',
+      whereArgs: [txId],
+      orderBy: 'line_order ASC, id ASC',
+    );
+    return results.map((m) => JournalEntry.fromMap(m)).toList();
+  }
+
+  Future<List<Map<String, dynamic>>> getAccountLedger(
+    int accountId, {
+    DateTime? fromDate,
+    DateTime? toDate,
+    String? entryType,
+    String? category,
+  }) async {
+    final db = await instance.database;
+    final account = await getAccountById(accountId);
+    if (account == null) return [];
+
+    final whereClauses = <String>['je.account_id = ?'];
+    final whereArgs = <dynamic>[accountId];
+
+    if (fromDate != null) {
+      whereClauses.add('t.date >= ?');
+      whereArgs.add(fromDate.toIso8601String());
+    }
+    if (toDate != null) {
+      whereClauses.add('t.date <= ?');
+      whereArgs.add(toDate.toIso8601String());
+    }
+    if (entryType != null && entryType.isNotEmpty && entryType != 'all') {
+      whereClauses.add('je.entry_type = ?');
+      whereArgs.add(entryType);
+    }
+    if (category != null && category.isNotEmpty && category != 'all') {
+      whereClauses.add('t.category = ?');
+      whereArgs.add(category);
+    }
+
+    final sql = '''
+      SELECT 
+        je.id as entry_id,
+        je.transaction_id,
+        je.entry_type,
+        je.amount,
+        je.memo,
+        je.line_order,
+        je.counter_account_id,
+        t.tx_number,
+        t.date as tx_date,
+        t.type as tx_type,
+        t.category as tx_category,
+        t.note as tx_note,
+        t.payment_mode,
+        t.receipt_path,
+        t.debit_account_name,
+        t.credit_account_name,
+        ca.name as counter_account_name
+      FROM journal_entries je
+      JOIN transactions t ON je.transaction_id = t.id
+      LEFT JOIN accounts ca ON je.counter_account_id = ca.id
+      WHERE ${whereClauses.join(' AND ')}
+      ORDER BY t.date ASC, je.id ASC
+    ''';
+
+    final rows = await db.rawQuery(sql, whereArgs);
+
+    // Compute running balances according to account category normal balance
+    double runningBalance = account.openingBalance;
+    final ledgerItems = <Map<String, dynamic>>[];
+
+    for (final row in rows) {
+      final isDebit = row['entry_type'] == 'debit';
+      final amount = (row['amount'] as num).toDouble();
+      final delta = DoubleEntryEngine.calculateBalanceDelta(
+        category: account.category,
+        entryType: isDebit ? EntryType.debit : EntryType.credit,
+        amount: amount,
+      );
+      runningBalance += delta;
+
+      final item = Map<String, dynamic>.from(row);
+      item['running_balance'] = runningBalance;
+      ledgerItems.add(item);
+    }
+
+    return ledgerItems;
+  }
+
+  Future<List<Map<String, dynamic>>> getMasterJournalRegister({
+    DateTime? fromDate,
+    DateTime? toDate,
+    int? accountId,
+    String? category,
+    String? personName,
+    String? paymentMode,
+    String? typeKey,
+    double? minAmount,
+    double? maxAmount,
+    String? searchQuery,
+    int limit = 100,
+  }) async {
+    final db = await instance.database;
+    final whereClauses = <String>[];
+    final whereArgs = <dynamic>[];
+
+    if (fromDate != null) {
+      whereClauses.add('date >= ?');
+      whereArgs.add(fromDate.toIso8601String());
+    }
+    if (toDate != null) {
+      whereClauses.add('date <= ?');
+      whereArgs.add(toDate.toIso8601String());
+    }
+    if (accountId != null) {
+      whereClauses.add('(account_id = ? OR to_account_id = ?)');
+      whereArgs.addAll([accountId, accountId]);
+    }
+    if (category != null && category.isNotEmpty && category != 'all') {
+      whereClauses.add('category = ?');
+      whereArgs.add(category);
+    }
+    if (personName != null && personName.isNotEmpty) {
+      whereClauses.add('person_name LIKE ?');
+      whereArgs.add('%$personName%');
+    }
+    if (paymentMode != null && paymentMode.isNotEmpty && paymentMode != 'all') {
+      whereClauses.add('payment_mode = ?');
+      whereArgs.add(paymentMode);
+    }
+    if (typeKey != null && typeKey.isNotEmpty && typeKey != 'all') {
+      whereClauses.add('type = ?');
+      whereArgs.add(typeKey);
+    }
+    if (minAmount != null) {
+      whereClauses.add('amount >= ?');
+      whereArgs.add(minAmount);
+    }
+    if (maxAmount != null) {
+      whereClauses.add('amount <= ?');
+      whereArgs.add(maxAmount);
+    }
+    if (searchQuery != null && searchQuery.trim().isNotEmpty) {
+      whereClauses.add('(note LIKE ? OR category LIKE ? OR debit_account_name LIKE ? OR credit_account_name LIKE ? OR bill_number LIKE ?)');
+      final q = '%${searchQuery.trim()}%';
+      whereArgs.addAll([q, q, q, q, q]);
+    }
+
+    final whereString = whereClauses.isNotEmpty ? 'WHERE ${whereClauses.join(' AND ')}' : '';
+    final sql = 'SELECT * FROM transactions $whereString ORDER BY date DESC, id DESC LIMIT $limit';
+    return await db.rawQuery(sql, whereArgs);
+  }
+
+  Future<Map<String, dynamic>> getTrialBalance() async {
+    final db = await instance.database;
+    final sql = '''
+      SELECT 
+        a.id as account_id,
+        a.name as account_name,
+        a.code as account_code,
+        a.category as account_category,
+        COALESCE(SUM(CASE WHEN je.entry_type = 'debit' THEN je.amount ELSE 0 END), 0) as total_debits,
+        COALESCE(SUM(CASE WHEN je.entry_type = 'credit' THEN je.amount ELSE 0 END), 0) as total_credits
+      FROM accounts a
+      LEFT JOIN journal_entries je ON a.id = je.account_id
+      WHERE a.is_archived = 0
+      GROUP BY a.id
+      ORDER BY a.category ASC, a.name ASC
+    ''';
+    final rows = await db.rawQuery(sql);
+    double sumDebits = 0.0;
+    double sumCredits = 0.0;
+    final items = <Map<String, dynamic>>[];
+    for (final r in rows) {
+      final deb = (r['total_debits'] as num).toDouble();
+      final cred = (r['total_credits'] as num).toDouble();
+      sumDebits += deb;
+      sumCredits += cred;
+      items.add({
+        'account_id': r['account_id'],
+        'account_name': r['account_name'],
+        'account_code': r['account_code'],
+        'account_category': r['account_category'],
+        'debits': deb,
+        'credits': cred,
+        'net_balance': deb - cred,
+      });
+    }
+    return {
+      'items': items,
+      'sum_debits': sumDebits,
+      'sum_credits': sumCredits,
+      'is_balanced': (sumDebits - sumCredits).abs() < 0.01,
+      'discrepancy': (sumDebits - sumCredits).abs(),
+    };
+  }
+
+  Future<Map<String, dynamic>> getCashFlowStatement({DateTime? fromDate, DateTime? toDate}) async {
+    final db = await instance.database;
+    final whereClauses = <String>[];
+    final whereArgs = <dynamic>[];
+    if (fromDate != null) {
+      whereClauses.add('t.date >= ?');
+      whereArgs.add(fromDate.toIso8601String());
+    }
+    if (toDate != null) {
+      whereClauses.add('t.date <= ?');
+      whereArgs.add(toDate.toIso8601String());
+    }
+    final whereStr = whereClauses.isNotEmpty ? 'AND ${whereClauses.join(' AND ')}' : '';
+
+    final sql = '''
+      SELECT 
+        t.type,
+        t.amount,
+        t.principal_portion,
+        t.interest_portion,
+        t.category
+      FROM transactions t
+      WHERE t.linked_tx_id IS NULL $whereStr
+    ''';
+    final rows = await db.rawQuery(sql, whereArgs);
+
+    double operatingInflows = 0.0;
+    double operatingOutflows = 0.0;
+    double financingInflows = 0.0;
+    double financingOutflows = 0.0;
+
+    for (final r in rows) {
+      final type = r['type'] as String?;
+      final amount = (r['amount'] as num).toDouble();
+
+      if (type == 'income' || type == 'credit') {
+        operatingInflows += amount;
+      } else if (type == 'expense' || type == 'debit' || type == 'credit_card_purchase') {
+        operatingOutflows += amount;
+      } else if (type == 'loan_taken') {
+        financingInflows += amount;
+      } else if (type == 'loan_repayment' || type == 'credit_card_payment') {
+        financingOutflows += amount;
+      } else if (type == 'chit_receipt') {
+        financingInflows += amount;
+      } else if (type == 'chit_payment') {
+        financingOutflows += amount;
+      }
+    }
+
+    final netOperating = operatingInflows - operatingOutflows;
+    final netFinancing = financingInflows - financingOutflows;
+    final netCashFlow = netOperating + netFinancing;
+
+    return {
+      'operating_inflows': operatingInflows,
+      'operating_outflows': operatingOutflows,
+      'net_operating': netOperating,
+      'financing_inflows': financingInflows,
+      'financing_outflows': financingOutflows,
+      'net_financing': netFinancing,
+      'net_cash_flow': netCashFlow,
+    };
+  }
+
+  Future<int> seedDemoDoubleEntryScenarios() async {
+    final db = await instance.database;
+
+    Future<int?> getAccountId(String code, String name) async {
+      final res = await db.query('accounts', columns: ['id'], where: 'code = ? OR name = ?', whereArgs: [code, name], limit: 1);
+      return res.isNotEmpty ? (res.first['id'] as int) : null;
+    }
+
+    final salaryBankId = await getAccountId('ASSET_SALARY_BANK', 'Salary Bank Account');
+    final cashWalletId = await getAccountId('ASSET_CASH_WALLET', 'Cash Wallet');
+    final gpfId = await getAccountId('ASSET_GPF', 'GPF Account');
+    final chitLiabId = await getAccountId('LIAB_CHIT_LIABILITY', 'Chit Fund Liability');
+    final friendALoanId = await getAccountId('LIAB_FRIEND_A_LOAN', 'Friend A Loan');
+    final cc1Id = await getAccountId('LIAB_CREDIT_CARD_1', 'Credit Card 1');
+    final housingLoanId = await getAccountId('LIAB_HOUSING_LOAN', 'Housing Loan');
+    final rentIncId = await getAccountId('INC_RENT', 'Rent Received');
+    final propSaleId = await getAccountId('INC_PROPERTY_SALE', 'Property Sale Proceeds');
+    final milkBillId = await getAccountId('EXP_MILK_BILL', 'Milk Bill');
+    final groceryId = await getAccountId('EXP_GROCERY_KIRANA', 'Grocery / Kirana');
+    final ccChargesId = await getAccountId('EXP_CC_CHARGES', 'Credit Card Interest / Charges');
+
+    if (salaryBankId == null || cashWalletId == null || chitLiabId == null) return 0;
+
+    int count = 0;
+
+    // Scenario 1: Chit Payments across 5 distinct funding sources
+    final chitScenarios = [
+      {'src': salaryBankId, 'dest': chitLiabId, 'amt': 10000.0, 'date': DateTime(2026, 1, 10), 'memo': 'Jan 2026 Chit paid from Salary Bank Account'},
+      if (gpfId != null) {'src': gpfId, 'dest': chitLiabId, 'amt': 10000.0, 'date': DateTime(2026, 2, 10), 'memo': 'Feb 2026 Chit paid from GPF Account'},
+      if (rentIncId != null) {'src': rentIncId, 'dest': chitLiabId, 'amt': 10000.0, 'date': DateTime(2026, 3, 10), 'memo': 'Mar 2026 Chit paid from Rent Received'},
+      if (friendALoanId != null) {'src': friendALoanId, 'dest': chitLiabId, 'amt': 10000.0, 'date': DateTime(2026, 4, 10), 'memo': 'Apr 2026 Chit paid from temporary borrowing from Friend A'},
+      if (propSaleId != null) {'src': propSaleId, 'dest': chitLiabId, 'amt': 10000.0, 'date': DateTime(2026, 5, 10), 'memo': 'May 2026 Chit paid from Property Sale Proceeds'},
+    ];
+
+    for (final s in chitScenarios) {
+      await insertTransaction(TransactionModel(
+        accountId: s['src'] as int,
+        toAccountId: s['dest'] as int,
+        type: TransactionType.chitPayment,
+        amount: s['amt'] as double,
+        category: 'Chit Contribution',
+        note: s['memo'] as String,
+        date: s['date'] as DateTime,
+        chitGroupName: 'Gold Chit Group',
+      ));
+      count++;
+    }
+
+    // Scenario 2: Milk Bill paid via 4 different sources
+    if (milkBillId != null) {
+      final milkScenarios = [
+        {'src': salaryBankId, 'amt': 2500.0, 'date': DateTime(2026, 1, 5), 'memo': 'January milk paid from Salary Bank'},
+        {'src': cashWalletId, 'amt': 2600.0, 'date': DateTime(2026, 2, 5), 'memo': 'February milk paid from Cash Wallet'},
+        if (cc1Id != null) {'src': cc1Id, 'amt': 2700.0, 'date': DateTime(2026, 3, 5), 'memo': 'March milk paid via Credit Card 1'},
+        if (friendALoanId != null) {'src': friendALoanId, 'amt': 2500.0, 'date': DateTime(2026, 4, 5), 'memo': 'April milk paid via borrowed money from Friend A'},
+      ];
+
+      for (final m in milkScenarios) {
+        await insertTransaction(TransactionModel(
+          accountId: m['src'] as int,
+          toAccountId: milkBillId,
+          type: m['src'] == cc1Id ? TransactionType.creditCardPurchase : TransactionType.expense,
+          amount: m['amt'] as double,
+          category: 'Milk Bill',
+          note: m['memo'] as String,
+          date: m['date'] as DateTime,
+        ));
+        count++;
+      }
+    }
+
+    // Scenario 3: Credit Card 1 purchases, charges, and bill payment
+    if (cc1Id != null) {
+      if (groceryId != null) {
+        await insertTransaction(TransactionModel(
+          accountId: cc1Id,
+          toAccountId: groceryId,
+          type: TransactionType.creditCardPurchase,
+          amount: 8500.0,
+          category: 'Grocery / Kirana',
+          note: 'Supermarket grocery charged to Card 1',
+          date: DateTime(2026, 2, 14),
+        ));
+        count++;
+      }
+      if (ccChargesId != null) {
+        await insertTransaction(TransactionModel(
+          accountId: cc1Id,
+          toAccountId: ccChargesId,
+          type: TransactionType.creditCardPurchase,
+          amount: 450.0,
+          category: 'Credit Card Interest / Charges',
+          note: 'Annual card fee and finance charge',
+          date: DateTime(2026, 2, 28),
+        ));
+        count++;
+      }
+      // Payment to card from Salary Bank Account
+      await insertTransaction(TransactionModel(
+        accountId: salaryBankId,
+        toAccountId: cc1Id,
+        type: TransactionType.creditCardPayment,
+        amount: 11650.0,
+        category: 'Credit Card Bill Payment',
+        note: 'Full payment of CC1 bill from Salary Bank',
+        date: DateTime(2026, 3, 4),
+      ));
+      count++;
+    }
+
+    // Scenario 4: Compound Housing Loan Repayment
+    if (housingLoanId != null) {
+      await insertTransaction(TransactionModel(
+        accountId: salaryBankId,
+        toAccountId: housingLoanId,
+        type: TransactionType.loanRepayment,
+        amount: 40000.0,
+        principalPortion: 25000.0,
+        interestPortion: 15000.0,
+        category: 'Housing Loan EMI',
+        note: 'Compound Loan Repayment: ₹25k Principal + ₹15k Interest',
+        date: DateTime(2026, 1, 15),
+      ));
+      count++;
+    }
+
+    // Scenario 5: Temporary Borrowing from Friend A and Repayment
+    if (friendALoanId != null) {
+      // 1. Money received into Cash Wallet
+      await insertTransaction(TransactionModel(
+        accountId: friendALoanId,
+        toAccountId: cashWalletId,
+        type: TransactionType.loanTaken,
+        amount: 10000.0,
+        category: 'Friend Borrowing',
+        note: 'Emergency temporary cash borrowed from Friend A',
+        personName: 'Friend A',
+        date: DateTime(2026, 3, 1),
+      ));
+      count++;
+
+      // 2. Direct expense paid from borrowed money
+      if (groceryId != null) {
+        await insertTransaction(TransactionModel(
+          accountId: friendALoanId,
+          toAccountId: groceryId,
+          type: TransactionType.expense,
+          amount: 5000.0,
+          category: 'Grocery / Kirana',
+          note: 'Kirana provisions paid directly from Friend A loan',
+          personName: 'Friend A',
+          date: DateTime(2026, 3, 10),
+        ));
+        count++;
+      }
+
+      // 3. Full repayment after salary credited
+      await insertTransaction(TransactionModel(
+        accountId: salaryBankId,
+        toAccountId: friendALoanId,
+        type: TransactionType.loanRepayment,
+        amount: 15000.0,
+        principalPortion: 15000.0,
+        interestPortion: 0.0,
+        category: 'Friend Loan Repayment',
+        note: 'Full settlement of ₹15,000 to Friend A via UPI from Salary Bank',
+        personName: 'Friend A',
+        date: DateTime(2026, 3, 31),
+      ));
+      count++;
+    }
+
+    return count;
   }
 
   Future<void> _reflectInPool(TransactionModel tx, DatabaseExecutor txn) async {
@@ -1516,7 +2050,7 @@ class DatabaseHelper {
       // RULE: Credit Card Expenditure
       // Reflected in Pool as a credit of the same amount (credit line drawn)
       // and then a debit of the same towards the expenditure made. Net pool balance impact = 0.
-      if (tx.type == TransactionType.debit) {
+      if (tx.isDebit) {
         // Entry A: Credit in Pool (Inflow from Credit Card)
         final poolCredit = TransactionModel(
           accountId: poolId,
@@ -1552,7 +2086,7 @@ class DatabaseHelper {
         );
         final dId = await txn.insert('transactions', poolDebit.toMap());
         await _applyTransactionEffect(poolDebit.copyWith(id: dId), txn, isReversal: false);
-      } else if (tx.type == TransactionType.credit) {
+      } else if (tx.isCredit) {
         // Credit card bill payment / refund
         final poolCredit = TransactionModel(
           accountId: poolId,
@@ -1576,7 +2110,7 @@ class DatabaseHelper {
       // - Salary Credit: by default takes receipt from Govt Account, adds to Pool Account as credit (+).
       // - Salary Debit: debited from Salary and debited from Pool Account (-).
       //   No separate credit to Pool needed before debit since it was credited on receipt.
-      if (tx.type == TransactionType.credit) {
+      if (tx.isCredit) {
         final poolSalaryCredit = TransactionModel(
           accountId: poolId,
           type: TransactionType.credit,
@@ -1593,7 +2127,7 @@ class DatabaseHelper {
         );
         final sId = await txn.insert('transactions', poolSalaryCredit.toMap());
         await _applyTransactionEffect(poolSalaryCredit.copyWith(id: sId), txn, isReversal: false);
-      } else if (tx.type == TransactionType.debit) {
+      } else if (tx.isDebit) {
         final poolSalaryDebit = TransactionModel(
           accountId: poolId,
           type: TransactionType.debit,
@@ -1614,7 +2148,7 @@ class DatabaseHelper {
     } else {
       // RULE: All other accounts (Bank, Chit, Debt, Lending, Demat, Insurance, Others, Custom)
       // Pool reflects every transaction: Inflows add to Pool, Outflows subtract from Pool.
-      if (tx.type == TransactionType.credit) {
+      if (tx.isCredit) {
         final poolEntry = TransactionModel(
           accountId: poolId,
           type: TransactionType.credit,
@@ -1631,7 +2165,7 @@ class DatabaseHelper {
         );
         final pId = await txn.insert('transactions', poolEntry.toMap());
         await _applyTransactionEffect(poolEntry.copyWith(id: pId), txn, isReversal: false);
-      } else if (tx.type == TransactionType.debit) {
+      } else if (tx.isDebit) {
         final poolEntry = TransactionModel(
           accountId: poolId,
           type: TransactionType.debit,
@@ -1667,7 +2201,7 @@ class DatabaseHelper {
       double newPrincipal = srcAccount.principalBalance;
       double newInterest = srcAccount.accruedInterest;
 
-      if (tx.type == TransactionType.debit) {
+      if (tx.isDebit) {
         newBalance -= factor * tx.amount;
         if (srcAccount.type == AccountType.lending) {
           // Lending more increases principal receivable
@@ -1677,7 +2211,7 @@ class DatabaseHelper {
           newPrincipal -= factor * tx.principalPortion;
           newInterest -= factor * tx.interestPortion;
         }
-      } else if (tx.type == TransactionType.credit) {
+      } else if (tx.isCredit) {
         newBalance += factor * tx.amount;
         if (srcAccount.type == AccountType.debt) {
           // Borrowing more increases debt principal
@@ -1687,7 +2221,7 @@ class DatabaseHelper {
           newPrincipal -= factor * tx.principalPortion;
           newInterest -= factor * tx.interestPortion;
         }
-      } else if (tx.type == TransactionType.transfer) {
+      } else if (tx.isTransfer) {
         // Outflow from source
         newBalance -= factor * tx.amount;
       }
@@ -1714,22 +2248,34 @@ class DatabaseHelper {
       );
     }
 
-    // 2. Update Destination Account (for Transfers)
-    if (tx.type == TransactionType.transfer && tx.toAccountId != null) {
+    // 2. Update Destination Account (for Transfers, compound Loan Repayments, Chit Contributions, Credit Card Payments)
+    if (tx.toAccountId != null && tx.toAccountId != tx.accountId) {
       final destMaps = await txn.query('accounts', where: 'id = ?', whereArgs: [tx.toAccountId]);
       if (destMaps.isNotEmpty) {
         final destAccount = Account.fromMap(destMaps.first);
-        double newDestBalance = destAccount.balance + (factor * tx.amount);
+        double newDestBalance = destAccount.balance;
         double newDestPrincipal = destAccount.principalBalance;
         double newDestInterest = destAccount.accruedInterest;
 
-        if (destAccount.type == AccountType.debt) {
-          // Paying debt via transfer
-          newDestPrincipal -= factor * tx.principalPortion;
+        if (tx.type == TransactionType.loanRepayment || destAccount.type == AccountType.debt) {
+          // Paying loan decreases liability principal & interest
+          final p = tx.principalPortion > 0 ? tx.principalPortion : tx.amount;
+          newDestPrincipal -= factor * p;
           newDestInterest -= factor * tx.interestPortion;
+          newDestBalance -= factor * tx.amount;
+        } else if (tx.type == TransactionType.creditCardPayment || destAccount.type == AccountType.creditCard) {
+          // Credit card payment decreases card outstanding liability
+          newDestBalance -= factor * tx.amount;
+        } else if (tx.type == TransactionType.loanTaken) {
+          // Loan taken received into destination account (e.g. Bank or Cash)
+          newDestBalance += factor * tx.amount;
         } else if (destAccount.type == AccountType.lending) {
           // Lending out via transfer
           newDestPrincipal += factor * tx.amount;
+          newDestBalance += factor * tx.amount;
+        } else {
+          // Standard transfer or deposit into destination
+          newDestBalance += factor * tx.amount;
         }
 
         DateTime? updatedDestLastInterestPaid = destAccount.lastInterestPaidDate;

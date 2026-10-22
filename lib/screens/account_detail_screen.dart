@@ -13,6 +13,7 @@ import '../utils/date_duration.dart';
 import '../theme/app_theme.dart';
 import 'add_transaction_screen.dart';
 import 'add_account_screen.dart';
+import 'account_ledger_screen.dart';
 
 class AccountDetailScreen extends StatefulWidget {
   final Account account;
@@ -54,6 +55,19 @@ class _AccountDetailScreenState extends State<AccountDetailScreen> {
                 ),
               );
               setState(() {});
+            },
+          ),
+          // Dedicated Double-Entry Ledger button
+          IconButton(
+            icon: const Icon(Icons.menu_book_outlined),
+            tooltip: 'View Double-Entry Ledger',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => AccountLedgerScreen(account: currentAccount),
+                ),
+              );
             },
           ),
           // Export Statement button

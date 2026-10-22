@@ -12,6 +12,9 @@ import 'chit_detail_screen.dart';
 import 'settings_screen.dart';
 import 'calendar_reminders_screen.dart';
 import 'statement_export_screen.dart';
+import 'master_journal_screen.dart';
+import 'csv_import_screen.dart';
+import '../utils/financial_year_helper.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -43,6 +46,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         index: _currentTabIndex,
         children: [
           _buildDashboardHome(context, finance, currency, formatter),
+          const MasterJournalScreen(),
           const CalendarRemindersScreen(),
           const StatementExportScreen(),
         ],
@@ -52,12 +56,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
         onTap: (index) => setState(() => _currentTabIndex = index),
         selectedItemColor: AppTheme.emeraldPrimary,
         unselectedItemColor: Colors.grey.shade600,
+        type: BottomNavigationBarType.fixed,
         selectedLabelStyle: const TextStyle(fontWeight: FontWeight.bold),
         items: const [
           BottomNavigationBarItem(
             icon: Icon(Icons.dashboard_outlined),
             activeIcon: Icon(Icons.dashboard),
             label: 'Dashboard',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.receipt_long_outlined),
+            activeIcon: Icon(Icons.receipt_long),
+            label: 'Journal',
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.calendar_month_outlined),
@@ -103,6 +113,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ),
         actions: [
           IconButton(
+            icon: const Icon(Icons.file_upload_outlined),
+            tooltip: 'Import CSV Statement',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const CsvImportScreen()),
+              );
+            },
+          ),
+          IconButton(
             icon: const Icon(Icons.sync),
             tooltip: 'Auto-Sync SMS Transactions',
             onPressed: () => _handleQuickSyncSms(context, finance),
@@ -132,6 +152,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   children: [
                     // 1. Net Overview Banner Card
                     _buildOverviewCard(finance, currency, formatter),
+
+                    const SizedBox(height: 16),
+
+                    // 1b. Double-Entry Balance Sheet & Mathematical Invariant Card
+                    _buildBalanceSheetCard(context, finance, currency, formatter),
 
                     const SizedBox(height: 20),
 
@@ -393,6 +418,239 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildBalanceSheetCard(
+    BuildContext context,
+    FinanceProvider finance,
+    String currency,
+    NumberFormat formatter,
+  ) {
+    final assets = finance.totalAssets;
+    final liabs = finance.totalLiabilities;
+    final netWorth = finance.netWorth;
+    final isBalanced = finance.isBalanceSheetBalanced;
+
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Row(
+                  children: [
+                    Icon(Icons.account_balance, color: AppTheme.emeraldPrimary, size: 20),
+                    SizedBox(width: 8),
+                    Text(
+                      'BALANCE SHEET & NET WORTH',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 13,
+                        letterSpacing: 0.8,
+                        color: AppTheme.emeraldDark,
+                      ),
+                    ),
+                  ],
+                ),
+                TextButton.icon(
+                  style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  icon: const Icon(Icons.balance, size: 16, color: AppTheme.emeraldPrimary),
+                  label: const Text('Trial Balance', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                  onPressed: () => _showTrialBalanceDialog(context, finance, currency, formatter),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('Total Assets', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                      Text(
+                        '$currency ${formatter.format(assets)}',
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppTheme.creditGreen),
+                      ),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('Total Liabilities', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                      Text(
+                        '$currency ${formatter.format(liabs)}',
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppTheme.debitRed),
+                      ),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('Net Worth', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                      Text(
+                        '$currency ${formatter.format(netWorth)}',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                          color: netWorth >= 0 ? AppTheme.emeraldPrimary : AppTheme.debitRed,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: isBalanced ? AppTheme.creditGreen.withAlpha(20) : AppTheme.debitRed.withAlpha(20),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: isBalanced ? AppTheme.creditGreen.withAlpha(80) : AppTheme.debitRed.withAlpha(80),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    isBalanced ? Icons.verified : Icons.warning_amber,
+                    size: 16,
+                    color: isBalanced ? AppTheme.creditGreen : AppTheme.debitRed,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      isBalanced
+                          ? 'Double-Entry Invariant: Assets – Liabilities == Equity + Net Profit (Balanced ✓)'
+                          : 'Double-entry discrepancy detected across ledger accounts.',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: isBalanced ? AppTheme.creditGreen : AppTheme.debitRed,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showTrialBalanceDialog(
+    BuildContext context,
+    FinanceProvider finance,
+    String currency,
+    NumberFormat formatter,
+  ) async {
+    final tb = await finance.getTrialBalance();
+    final items = tb['items'] as List<Map<String, dynamic>>? ?? [];
+    final sumDebits = (tb['sum_debits'] as num?)?.toDouble() ?? 0.0;
+    final sumCredits = (tb['sum_credits'] as num?)?.toDouble() ?? 0.0;
+    final isBalanced = tb['is_balanced'] as bool? ?? true;
+
+    if (!context.mounted) return;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.balance, color: AppTheme.emeraldPrimary),
+            SizedBox(width: 8),
+            Text('Trial Balance (General Ledger)'),
+          ],
+        ),
+        content: SizedBox(
+          width: 600,
+          height: 400,
+          child: Column(
+            children: [
+              Expanded(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.vertical,
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: DataTable(
+                      headingRowColor: WidgetStateProperty.all(Colors.grey.shade100),
+                      columns: const [
+                        DataColumn(label: Text('Code', style: TextStyle(fontWeight: FontWeight.bold))),
+                        DataColumn(label: Text('Account Name', style: TextStyle(fontWeight: FontWeight.bold))),
+                        DataColumn(label: Text('Category', style: TextStyle(fontWeight: FontWeight.bold))),
+                        DataColumn(label: Text('Debits (Dr)', style: TextStyle(fontWeight: FontWeight.bold))),
+                        DataColumn(label: Text('Credits (Cr)', style: TextStyle(fontWeight: FontWeight.bold))),
+                      ],
+                      rows: items.map((r) {
+                        final deb = (r['debits'] as num).toDouble();
+                        final cred = (r['credits'] as num).toDouble();
+                        return DataRow(cells: [
+                          DataCell(Text(r['account_code']?.toString() ?? '-')),
+                          DataCell(Text(r['account_name']?.toString() ?? '-')),
+                          DataCell(Text(r['account_category']?.toString().toUpperCase() ?? '-')),
+                          DataCell(Text(deb > 0 ? '$currency ${formatter.format(deb)}' : '-')),
+                          DataCell(Text(cred > 0 ? '$currency ${formatter.format(cred)}' : '-')),
+                        ]);
+                      }).toList(),
+                    ),
+                  ),
+                ),
+              ),
+              const Divider(height: 1),
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: isBalanced ? AppTheme.creditGreen.withAlpha(20) : AppTheme.debitRed.withAlpha(20),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'Total Dr: $currency ${formatter.format(sumDebits)}',
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                    ),
+                    Text(
+                      'Total Cr: $currency ${formatter.format(sumCredits)}',
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                    ),
+                    Text(
+                      isBalanced ? 'Balanced ✓' : 'Discrepancy: $currency ${formatter.format((sumDebits - sumCredits).abs())}',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: isBalanced ? AppTheme.creditGreen : AppTheme.debitRed,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
     );
   }
 

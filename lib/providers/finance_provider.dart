@@ -193,6 +193,54 @@ class FinanceProvider with ChangeNotifier {
     return await _dbHelper.getEditHistory(transactionId);
   }
 
+  Future<List<JournalEntry>> getJournalEntriesForTransaction(int txId) async {
+    return await _dbHelper.getJournalEntriesForTransaction(txId);
+  }
+
+  Future<List<Map<String, dynamic>>> getAccountLedger(
+    int accountId, {
+    DateTime? fromDate,
+    DateTime? toDate,
+    String? entryType,
+    String? category,
+  }) async {
+    return await _dbHelper.getAccountLedger(
+      accountId,
+      fromDate: fromDate,
+      toDate: toDate,
+      entryType: entryType,
+      category: category,
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> getMasterJournalRegister({
+    DateTime? fromDate,
+    DateTime? toDate,
+    int? accountId,
+    String? category,
+    String? personName,
+    String? paymentMode,
+    String? typeKey,
+    double? minAmount,
+    double? maxAmount,
+    String? searchQuery,
+    int limit = 100,
+  }) async {
+    return await _dbHelper.getMasterJournalRegister(
+      fromDate: fromDate,
+      toDate: toDate,
+      accountId: accountId,
+      category: category,
+      personName: personName,
+      paymentMode: paymentMode,
+      typeKey: typeKey,
+      minAmount: minAmount,
+      maxAmount: maxAmount,
+      searchQuery: searchQuery,
+      limit: limit,
+    );
+  }
+
   Future<List<TransactionModel>> getFilteredTransactions({
     int? accountId,
     DateTime? fromDate,
@@ -303,4 +351,39 @@ class FinanceProvider with ChangeNotifier {
   Future<bool> requestSmsPermission() => AutoTrackerService.instance.requestSmsPermission();
   Future<bool> isNotificationListenerEnabled() => AutoTrackerService.instance.isNotificationListenerEnabled();
   Future<void> openNotificationListenerSettings() => AutoTrackerService.instance.openNotificationListenerSettings();
+
+  // ==================== DOUBLE-ENTRY BALANCE SHEET & CASH FLOW ====================
+
+  double get totalAssets =>
+      assetAccounts.fold(0.0, (sum, a) => sum + a.balance);
+
+  double get totalLiabilities =>
+      liabilityAccounts.fold(0.0, (sum, a) => sum + (a.principalBalance > 0 ? (a.principalBalance + a.accruedInterest) : a.balance.abs()));
+
+  double get netWorth => totalAssets - totalLiabilities;
+
+  double get totalIncome =>
+      incomeAccounts.fold(0.0, (sum, a) => sum + a.balance);
+
+  double get totalExpenses =>
+      expenseAccounts.fold(0.0, (sum, a) => sum + a.balance);
+
+  double get netProfitLoss => totalIncome - totalExpenses;
+
+  double get totalEquity =>
+      equityAccounts.fold(0.0, (sum, a) => sum + a.balance);
+
+  bool get isBalanceSheetBalanced =>
+      (netWorth - (totalEquity + netProfitLoss)).abs() < 1.0;
+
+  Future<Map<String, dynamic>> getTrialBalance() => _dbHelper.getTrialBalance();
+
+  Future<Map<String, dynamic>> getCashFlowStatement({DateTime? fromDate, DateTime? toDate}) =>
+      _dbHelper.getCashFlowStatement(fromDate: fromDate, toDate: toDate);
+
+  Future<int> seedDemoDoubleEntryScenarios() async {
+    final count = await _dbHelper.seedDemoDoubleEntryScenarios();
+    await loadAllData();
+    return count;
+  }
 }
