@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import '../models/account.dart';
+import '../models/account_category.dart';
 import '../models/transaction_model.dart';
 import '../providers/finance_provider.dart';
 import '../services/repayment_allocator.dart';

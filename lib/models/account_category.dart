@@ -1,58 +1,20 @@
-enum AccountCategory {
-  asset,
-  liability,
-  income,
-  expense,
-  equity,
-}
-
 enum NormalBalance {
   debit,
   credit,
 }
 
-extension AccountCategoryExtension on AccountCategory {
-  String get key {
-    switch (this) {
-      case AccountCategory.asset:
-        return 'asset';
-      case AccountCategory.liability:
-        return 'liability';
-      case AccountCategory.income:
-        return 'income';
-      case AccountCategory.expense:
-        return 'expense';
-      case AccountCategory.equity:
-        return 'equity';
-    }
-  }
+enum AccountCategory {
+  asset('asset', 'Assets', NormalBalance.debit),
+  liability('liability', 'Liabilities', NormalBalance.credit),
+  income('income', 'Income', NormalBalance.credit),
+  expense('expense', 'Expenses', NormalBalance.debit),
+  equity('equity', 'Equity', NormalBalance.credit);
 
-  String get displayName {
-    switch (this) {
-      case AccountCategory.asset:
-        return 'Assets';
-      case AccountCategory.liability:
-        return 'Liabilities';
-      case AccountCategory.income:
-        return 'Income';
-      case AccountCategory.expense:
-        return 'Expenses';
-      case AccountCategory.equity:
-        return 'Equity';
-    }
-  }
+  final String key;
+  final String displayName;
+  final NormalBalance normalBalance;
 
-  NormalBalance get normalBalance {
-    switch (this) {
-      case AccountCategory.asset:
-      case AccountCategory.expense:
-        return NormalBalance.debit;
-      case AccountCategory.liability:
-      case AccountCategory.income:
-      case AccountCategory.equity:
-        return NormalBalance.credit;
-    }
-  }
+  const AccountCategory(this.key, this.displayName, this.normalBalance);
 
   static AccountCategory fromKey(String? key) {
     switch (key?.toLowerCase().trim()) {
@@ -69,4 +31,8 @@ extension AccountCategoryExtension on AccountCategory {
         return AccountCategory.asset;
     }
   }
+}
+
+extension AccountCategoryExtension on AccountCategory {
+  static AccountCategory fromKey(String? key) => AccountCategory.fromKey(key);
 }

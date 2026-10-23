@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'account_category.dart';
+export 'account_category.dart';
 
 enum AccountType {
   pool,

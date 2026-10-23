@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
 import '../models/account.dart';
+import '../models/account_category.dart';
 import '../models/chit_details.dart';
 import '../models/transaction_model.dart';
 import '../models/transaction_edit_history.dart';
