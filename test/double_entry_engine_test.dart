@@ -1,9 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import '../lib/models/account.dart';
 import '../lib/models/account_category.dart';
 import '../lib/models/journal_entry.dart';
-import '../lib/models/transaction_model.dart';
-import '../lib/models/transaction_type.dart';
 import '../lib/services/double_entry_engine.dart';
 import '../lib/utils/financial_year_helper.dart';
 
@@ -25,20 +22,18 @@ void main() {
         JournalEntry(
           transactionId: 1,
           accountId: 10,
-          entryType: JournalEntryType.debit,
+          entryType: EntryType.debit,
           amount: 5000.0,
         ),
         JournalEntry(
           transactionId: 1,
           accountId: 20,
-          entryType: JournalEntryType.credit,
+          entryType: EntryType.credit,
           amount: 5000.0,
         ),
       ];
 
-      expect(DoubleEntryEngine.validateDebitsEqualCredits(entries), isTrue);
-      expect(DoubleEntryEngine.sumDebits(entries), 5000.0);
-      expect(DoubleEntryEngine.sumCredits(entries), 5000.0);
+      expect(() => DoubleEntryEngine.validateBalanced(entries), returnsNormally);
     });
 
     test('Throws UnbalancedTransactionException when debits != credits', () {
@@ -46,48 +41,49 @@ void main() {
         JournalEntry(
           transactionId: 2,
           accountId: 10,
-          entryType: JournalEntryType.debit,
+          entryType: EntryType.debit,
           amount: 5000.0,
         ),
         JournalEntry(
           transactionId: 2,
           accountId: 20,
-          entryType: JournalEntryType.credit,
+          entryType: EntryType.credit,
           amount: 4000.0,
         ),
       ];
 
       expect(
-        () => DoubleEntryEngine.validateJournalEntries(entries),
+        () => DoubleEntryEngine.validateBalanced(entries),
         throwsA(isA<UnbalancedTransactionException>()),
       );
     });
 
     test('Compound EMI repayment entry balances perfectly', () {
-      final compoundEntries = DoubleEntryEngine.generateCompoundLoanRepayment(
+      final compoundEntries = DoubleEntryEngine.buildLoanRepaymentCompoundEntries(
         transactionId: 99,
-        sourceBankAccountId: 1, // Salary Bank
-        loanLiabilityAccountId: 2, // Housing Loan
+        sourceAccountId: 1, // Salary Bank
+        loanAccountId: 2, // Housing Loan
         interestExpenseAccountId: 3, // Housing Loan Interest
-        principalAmount: 35000.0,
-        interestAmount: 15000.0,
+        principalPortion: 35000.0,
+        interestPortion: 15000.0,
       );
 
-      expect(DoubleEntryEngine.validateDebitsEqualCredits(compoundEntries), isTrue);
-      expect(DoubleEntryEngine.sumDebits(compoundEntries), 50000.0);
-      expect(DoubleEntryEngine.sumCredits(compoundEntries), 50000.0);
+      expect(compoundEntries.length, 3);
+      expect(() => DoubleEntryEngine.validateBalanced(compoundEntries), returnsNormally);
     });
 
     test('Indian Financial Year helper resolves FY2026-27 accurately', () {
       final dateInMay2026 = DateTime(2026, 5, 15);
-      final fy = FinancialYearHelper.getFinancialYear(dateInMay2026);
-      expect(fy.label, 'FY 2026-27');
-      expect(fy.startDate, DateTime(2026, 4, 1));
-      expect(fy.endDate, DateTime(2027, 3, 31, 23, 59, 59));
+      final fyStartYear = FinancialYearHelper.getFYStartYear(dateInMay2026);
+      expect(fyStartYear, 2026);
+      expect(FinancialYearHelper.formatFY(fyStartYear), 'FY 2026-27');
+      expect(FinancialYearHelper.getStartDate(fyStartYear), DateTime(2026, 4, 1, 0, 0, 0));
+      expect(FinancialYearHelper.getEndDate(fyStartYear), DateTime(2027, 3, 31, 23, 59, 59));
 
       final dateInJan2026 = DateTime(2026, 1, 10);
-      final fyJan = FinancialYearHelper.getFinancialYear(dateInJan2026);
-      expect(fyJan.label, 'FY 2025-26');
+      final fyJanStartYear = FinancialYearHelper.getFYStartYear(dateInJan2026);
+      expect(fyJanStartYear, 2025);
+      expect(FinancialYearHelper.formatFY(fyJanStartYear), 'FY 2025-26');
     });
   });
 }
